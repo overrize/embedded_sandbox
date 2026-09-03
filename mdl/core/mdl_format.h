@@ -37,13 +37,41 @@ typedef struct {
 } mdl_header_t;
 
 /*
- * One entry per GOT slot that needs the module's runtime data-region base
- * address added at load time. -msingle-pic-base routes global data access
- * through r9 + GOT, so loading is "walk the GOT, add one base address" --
- * not a general relocation engine. Finalized in M1 alongside the loader.
+ * One entry per GOT slot that needs a runtime base address added at load
+ * time. -msingle-pic-base routes ALL address-of-global-data through
+ * r9 + GOT (r9 = runtime GOT base, loaded once before entering the
+ * module) -- so loading is "walk the GOT, add one base address per slot"
+ * -- not a general relocation engine.
+ *
+ * kind exists because empirically (verified against real
+ * arm-none-eabi-gcc 12.2 output, see mdl/tests/modules/hello) a GOT slot
+ * does NOT always hold the address of a *data* object: with
+ * -mno-pic-data-is-text-relative, the compiler cannot assume .rodata
+ * (string literals, const tables -- placed in the TEXT region, alongside
+ * .text) is reachable via PC-relative addressing from .text, so it
+ * routes .rodata addresses through the GOT too, exactly like a mutable
+ * global. A GOT slot's original (link-time, base-address-0) value tells
+ * you which: it falls either inside the linked .text+.rodata range or
+ * inside the linked .data(+.got) range, never both. packer.py classifies
+ * each slot by that range check and normalizes the stored value to an
+ * in-blob offset (see mdl_header_t.got_off's comment); the MCU-side
+ * loader then does exactly one of:
+ *   MDL_RELOC_TEXT_BASE: *slot += module's runtime text-region base
+ *   MDL_RELOC_DATA_BASE: *slot += module's runtime data-region base
+ * with no further interpretation needed.
  */
+typedef enum {
+    MDL_RELOC_TEXT_BASE = 0,
+    MDL_RELOC_DATA_BASE = 1,
+} mdl_reloc_kind_t;
+
 typedef struct {
-    uint32_t got_offset; /* byte offset into the GOT area */
+    uint32_t got_offset; /* byte offset into the GOT area, itself always
+                           * inside the data blob (see got_off) --
+                           * regardless of which base `kind` says to add
+                           * to the value stored there */
+    uint8_t  kind;        /* mdl_reloc_kind_t */
+    uint8_t  _reserved[3];
 } mdl_reloc_t;
 
 /*

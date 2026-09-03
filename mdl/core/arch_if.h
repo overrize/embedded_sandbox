@@ -47,4 +47,21 @@ void arch_code_sync(void *addr, size_t len);
  * handling (M3). */
 bool arch_pc_in_range(uintptr_t pc, uintptr_t lo, uintptr_t hi);
 
+/*
+ * M1-only bridge, not one of the five interfaces above: calls
+ * `entry(arg0)` with the PIC base register (r9 on ARM) loaded from
+ * `got_base` first, returning entry's return value. Unlike
+ * arch_enter_unprivileged() this DOES return, and does not touch
+ * privilege level or the stack pointer -- M1's loader calls module_init()
+ * directly from the loader's own (privileged) call stack, so all this
+ * needs to do is get r9 right around an otherwise-ordinary call.
+ *
+ * M2 replaces the loader's use of this with arch_enter_unprivileged()
+ * (a real task entry, privilege drop, dedicated PSP stack); this stays
+ * available for anything that still needs a same-context, same-privilege
+ * call into module code with r9 set correctly (e.g. re-invoking a
+ * module-supplied callback from privileged context).
+ */
+int arch_call_privileged(void *entry, void *got_base, const void *arg0);
+
 #endif /* MDL_ARCH_IF_H */
