@@ -1,0 +1,16 @@
+# Vendor packages -- not ours to version, and huge. Re-download/re-extract
+# as needed; mdl/tests/hil/*/Makefile expects AT32F435_437_Firmware_Library_V2.2.6/
+# extracted next to this repo root.
+/AT32F435_437_Firmware_Library_V2.2.6/
+/AT32F435_437_Firmware_Library_V2.2.6.zip
+/Segger_AT32MCU_AddOn_Win32-X86_64_V2.0.21.zip
+/ARTERY_AT32_MCU_Cross_Reference_Table_CH_V202011.xlsx
+
+# Build outputs
+build/
+*.o
+*.d
+*.elf
+*.bin
+*.map
+*.mdl
