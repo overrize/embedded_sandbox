@@ -33,6 +33,11 @@ static void module_task_trampoline(void *pvParameters)
      * never do this, and it can't: modules don't link against tasks.h
      * at all. */
     g_mdl_slot.state = MDL_SLOT_LOADED; /* ran once; loader may reload */
+    g_mdl_slot.task_handle = NULL; /* about to be stale -- don't leave a
+                                     * dangling handle mdl_supervisor.c
+                                     * could mistakenly vTaskDelete()
+                                     * again on some later, unrelated
+                                     * fault */
     vTaskDelete(NULL);
 }
 
@@ -63,5 +68,17 @@ int mdl_start_module_task(module_t *m, const struct host_api *host)
 
     TaskHandle_t created = NULL;
     BaseType_t ok = xTaskCreateRestricted(&task_def, &created);
-    return (ok == pdPASS) ? 1 : 0;
+    if (ok != pdPASS) {
+        return 0;
+    }
+
+    /* RUNNING starts counting from here (task exists, scheduler will
+     * pick it up), not from the trampoline's first line -- avoids a
+     * window where the supervisor could see a stale/uninitialized
+     * last_active_tick if it happened to check before the new task got
+     * its first timeslice. */
+    m->task_handle = created;
+    m->last_active_tick = (uint32_t)xTaskGetTickCount();
+    m->state = MDL_SLOT_RUNNING;
+    return 1;
 }

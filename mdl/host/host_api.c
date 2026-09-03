@@ -30,6 +30,17 @@ extern void vPortResetPrivilege(BaseType_t xRunningPrivileged);
 
 #define MDL_SYSCALL_GATE __attribute__((section("freertos_system_calls")))
 
+/* M3: every gate function feeds the software watchdog just by being
+ * called -- see registry.h's last_active_tick comment for why "any host
+ * call" is the feed signal the v1 vtable can support without adding a
+ * new ABI entry. Must run privileged: g_mdl_slot lives in ordinary host
+ * RAM, outside every region the calling module task was ever granted,
+ * so an unprivileged write to it would itself fault. */
+static void feed_watchdog(void)
+{
+    g_mdl_slot.last_active_tick = (uint32_t)xTaskGetTickCount();
+}
+
 /* ---- pointer validation --------------------------------------------
  * "所有指针参数必须落在该模块自己的 data/heap 区间内" -- but a module
  * may legitimately pass a string literal, which lives in its OWN
@@ -115,6 +126,7 @@ void host_log(const char *msg) MDL_SYSCALL_GATE;
 void host_log(const char *msg)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
+    feed_watchdog();
     host_log_impl(msg);
     vPortResetPrivilege(was_priv);
 }
@@ -135,6 +147,7 @@ int host_gpio_set(int pin, int level) MDL_SYSCALL_GATE;
 int host_gpio_set(int pin, int level)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
+    feed_watchdog();
     int ret = host_gpio_set_impl(pin, level);
     vPortResetPrivilege(was_priv);
     return ret;
@@ -153,6 +166,7 @@ int host_gpio_get(int pin) MDL_SYSCALL_GATE;
 int host_gpio_get(int pin)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
+    feed_watchdog();
     int ret = host_gpio_get_impl(pin);
     vPortResetPrivilege(was_priv);
     return ret;
@@ -168,6 +182,7 @@ uint32_t host_uptime_ms(void) MDL_SYSCALL_GATE;
 uint32_t host_uptime_ms(void)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
+    feed_watchdog();
     uint32_t ms = (uint32_t)xTaskGetTickCount();
     vPortResetPrivilege(was_priv);
     return ms;
@@ -180,6 +195,7 @@ void host_delay_ms(uint32_t ms)
      * stay privileged for the wait itself, just for the call into it
      * (xTaskGetTickCount()-adjacent bookkeeping FreeRTOS does inside). */
     BaseType_t was_priv = xPortRaisePrivilege();
+    feed_watchdog();
     vPortResetPrivilege(was_priv);
     vTaskDelay(pdMS_TO_TICKS(ms));
 }
@@ -236,6 +252,7 @@ void *host_alloc(size_t n) MDL_SYSCALL_GATE;
 void *host_alloc(size_t n)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
+    feed_watchdog();
     void *ret = host_alloc_impl(n);
     vPortResetPrivilege(was_priv);
     return ret;
@@ -269,6 +286,7 @@ void host_free(void *p) MDL_SYSCALL_GATE;
 void host_free(void *p)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
+    feed_watchdog();
     host_free_impl(p);
     vPortResetPrivilege(was_priv);
 }
