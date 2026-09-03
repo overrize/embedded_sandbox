@@ -124,12 +124,10 @@ typedef struct host_api {
      *     than the watchdog period gets killed exactly as if it were
      *     spinning in its own code, so passing an enormous ms is
      *     equivalent to hanging.
-     *   - NOT callable from module_init(): module_init() runs before
-     *     the module has a scheduled task context to yield from in v1's
-     *     loader sequencing. Calling it there is undefined in v1 (no
-     *     validation currently catches this -- treat it as a module-
-     *     author bug, subject to tightening in a later ABI version).
-     *   - Callable from the module's task body.
+     *   - Callable from module_init() (from M2 on, module_init() itself
+     *     runs inside the module's own FreeRTOS task -- see
+     *     mdl/core/module_task.c -- so there is always a task context to
+     *     yield from) and from the module's task body.
      */
     void (*delay_ms)(uint32_t ms);
 
@@ -186,10 +184,5 @@ void host_api_init(void);
  * since core/ doesn't know host_api.c exists; the platform's main.c
  * sequences load -> host_api_pool_reset -> run explicitly. */
 void host_api_pool_reset(struct module *m);
-
-/* Millisecond tick count, driven by SysTick -- call once at boot after
- * SystemInit() so SystemCoreClock is valid. Powers uptime_ms() and (in
- * v1, pre-RTOS) delay_ms()'s busy-wait. */
-void host_api_clock_init(void);
 
 #endif /* MDL_HOST_API_H */
