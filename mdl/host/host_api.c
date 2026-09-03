@@ -92,6 +92,16 @@ static const gpio_whitelist_entry_t *gpio_lookup(int pin)
 
 /* ---- log: ARM semihosting SYS_WRITE0 (placeholder until M4's USB CDC) */
 
+/* noinline: cheap insurance against a real, reproducible bug found
+ * while bringing up the QEMU target (mdl/tests/qemu/cmsdk_m4): at -O1+
+ * GCC inlines this at every call site, and two inlined calls
+ * back-to-back in the same caller (this file's host_log_impl() does
+ * exactly that) produce adjacent `bkpt 0xAB` instructions that QEMU's
+ * semihosting emulation mishandles (second call traps with garbage in
+ * r0). Real hardware/debuggers don't have this problem, and this file
+ * doesn't run under QEMU -- but the fix is free, so it stays here too
+ * rather than only in the QEMU-specific copy. */
+__attribute__((noinline))
 static void semihost_write0(const char *msg)
 {
     register uint32_t r0 __asm__("r0") = 0x04;

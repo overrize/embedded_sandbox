@@ -1,7 +1,7 @@
 #include "arch_if.h"
 #include "registry.h" /* mdl_record_fault() -- plain integers in, no CMSIS out */
 #include "supervisor.h" /* mdl_supervisor_wake_from_isr() -- ISR-safe, see its own doc */
-#include "at32f435_437.h" /* device header first -- see the comment in mpu_armv7m.c */
+#include "cmsis_device.h" /* per-project device header indirection -- see mpu_armv7m.c's comment */
 
 bool arch_pc_in_range(uintptr_t pc, uintptr_t lo, uintptr_t hi)
 {

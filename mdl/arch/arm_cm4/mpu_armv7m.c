@@ -2,16 +2,27 @@
 #include "arch_if.h"
 
 /*
- * at32f435_437.h is Artery's device header -- it defines __FPU_PRESENT,
- * __MPU_PRESENT, __NVIC_PRIO_BITS and IRQn_Type before pulling in
- * core_cm4.h (CMSIS-Core's standard Cortex-M4 header: MPU_Type, SCB_Type,
- * __DSB()/__ISB() intrinsics, register field masks). CMSIS requires that
- * ordering -- core_cm4.h must never be included directly, only via the
- * device header, or the device-specific macros it depends on won't exist
- * yet. Point your include path at the vendor BSP; this file does not
- * vendor its own copy of either header.
+ * "cmsis_device.h" is a one-file indirection every project supplies its
+ * own copy of (on its own -I include path, taking precedence over
+ * anything of the same name elsewhere): it must define __FPU_PRESENT,
+ * __MPU_PRESENT, __NVIC_PRIO_BITS and IRQn_Type, THEN #include
+ * core_cm4.h itself (CMSIS-Core's standard Cortex-M4 header: MPU_Type,
+ * SCB_Type, __DSB()/__ISB() intrinsics, register field masks) -- CMSIS
+ * requires that ordering, core_cm4.h must never be included directly,
+ * only via a device header, or the device-specific macros it depends on
+ * won't exist yet.
+ *
+ * For a real AT32F435 target that one file is just
+ * `#include "at32f435_437.h"` (Artery's own device header already does
+ * the right thing) -- see mdl/tests/hil/at32f435_m0/inc/cmsis_device.h.
+ * For the QEMU mps2-an386 target it's a handful of macros plus a direct
+ * core_cm4.h include, since there's no vendor device header at all --
+ * see mdl/tests/qemu/cmsdk_m4/inc/cmsis_device.h. This is what makes
+ * arch/arm_cm4/ actually vendor-portable (any Cortex-M4, not just
+ * AT32F435) rather than silently AT32-locked through a hardcoded
+ * #include here.
  */
-#include "at32f435_437.h"
+#include "cmsis_device.h"
 
 /*
  * ARMv7-M MPU region sizes are powers of two, minimum 32 bytes, and the
