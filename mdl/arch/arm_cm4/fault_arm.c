@@ -1,6 +1,6 @@
 #include "arch_if.h"
 #include "registry.h" /* mdl_record_fault() -- plain integers in, no CMSIS out */
-#include "supervisor.h" /* mdl_supervisor_notify_fault_from_isr() -- ISR-safe, see its own doc */
+#include "supervisor.h" /* mdl_supervisor_wake_from_isr() -- ISR-safe, see its own doc */
 #include "at32f435_437.h" /* device header first -- see the comment in mpu_armv7m.c */
 
 bool arch_pc_in_range(uintptr_t pc, uintptr_t lo, uintptr_t hi)
@@ -79,14 +79,14 @@ static void mdl_memmanage_handler_c(uint32_t *stacked)
      * in a tight loop, forever). thumb bit (bit 0) set, matching every
      * other Thumb code pointer on this target -- see loader.c's
      * init_off comment for why that bit matters to BLX/BX. Do NOT
-     * delete the task here -- mdl_supervisor_notify_fault_from_isr()
-     * only wakes the supervisor task; the actual vTaskDelete() happens
-     * from ITS context (mdl/core/supervisor.c), per the spec's explicit
-     * "不在 handler 里删任务" rule.
+     * delete the task here -- mdl_supervisor_wake_from_isr() only wakes
+     * the supervisor task; the actual vTaskDelete() happens from ITS
+     * context (mdl/core/supervisor.c), per the spec's explicit "不在
+     * handler 里删任务" rule.
      */
     stacked[6] = ((uint32_t)mdl_module_trap) | 1u;
 
-    mdl_supervisor_notify_fault_from_isr();
+    mdl_supervisor_wake_from_isr();
 }
 
 __attribute__((naked)) void MemManage_Handler(void)
