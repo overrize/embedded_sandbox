@@ -185,4 +185,25 @@ void host_api_init(void);
  * sequences load -> host_api_pool_reset -> run explicitly. */
 void host_api_pool_reset(struct module *m);
 
+/*
+ * Host-side GPIO access to the same whitelist the module vtable exposes,
+ * for host code that is already privileged (the debug console in
+ * mdl/transport/console.c).
+ *
+ * These are NOT the vtable entries with the SVC gate removed as an
+ * optimisation -- the difference that matters is that they do NOT feed
+ * the software watchdog. Routing a console "led 0 1" through
+ * g_host_api.gpio_set() would bump g_mdl_slot.last_active_tick and so
+ * convince mdl_supervisor_run() that a module stuck in while(1){} was
+ * still alive, purely because a human typed at the console. Same pin
+ * indices and same -1-on-not-whitelisted return as gpio_set()/gpio_get().
+ */
+int host_gpio_direct_set(int pin, int level);
+int host_gpio_direct_get(int pin);
+
+/* Human-readable name for a whitelist pin index ("LEDB (PD10)"), or NULL
+ * if the index isn't whitelisted -- so the console can list what a module
+ * is actually allowed to touch without duplicating the board pin table. */
+const char *host_gpio_name(int pin);
+
 #endif /* MDL_HOST_API_H */

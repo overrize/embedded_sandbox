@@ -2,7 +2,15 @@
 #define MDL_SUPERVISOR_H
 
 #include "registry.h"
-#include "host_api.h"
+
+/* NOT #include "host_api.h": nothing declared in this header mentions a
+ * host_api type. It used to be included here, which quietly made every
+ * translation unit that wants mdl_supervisor_wake_from_isr() -- notably
+ * mdl/arch/arm_cm4/fault_arm.c, the arch layer -- need mdl/host on its
+ * include path. That broke the bare-metal M0/M1 builds the moment M3
+ * added this include to fault_arm.c, and went unnoticed because neither
+ * was rebuilt afterwards. supervisor.c includes host_api.h itself, where
+ * the dependency is real. */
 
 /*
  * The loader/supervisor task's fault-recovery and watchdog machinery.
@@ -55,5 +63,19 @@ void mdl_supervisor_wake_from_isr(void);
  * the slot is immediately ready for the next mdl_load().
  */
 void mdl_supervisor_run(void) __attribute__((noreturn));
+
+/*
+ * Unload the module and reclaim everything it held (task, alloc pool,
+ * registry state), the same way MDL_CMD_UNLOAD does -- but without
+ * writing a binary protocol response, since the caller is the text
+ * console rather than a framed request.
+ *
+ * SUPERVISOR-TASK CONTEXT ONLY. mdl/transport/console.c satisfies that
+ * because mdl_console_execute() is called from mdl_supervisor_run()'s
+ * own loop, not from the USB RX task that assembled the line. Calling
+ * this from anywhere else races the supervisor's fault/watchdog handling
+ * over the same slot.
+ */
+void mdl_supervisor_request_unload(void);
 
 #endif /* MDL_SUPERVISOR_H */

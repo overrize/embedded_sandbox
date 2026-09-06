@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "console.h"
 #include "crc32.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -34,6 +35,27 @@ static uint32_t          s_ready_len;
 
 static TaskHandle_t s_supervisor_handle_for_proto;
 
+/*
+ * Weak no-op default for the transport's one output primitive.
+ *
+ * mdl/transport/usb_cdc.c provides the real, strong definition, and any
+ * build that has a transport links it. But mdl/core/supervisor.c calls
+ * into this file unconditionally (it has since M4 added protocol
+ * handling to mdl_supervisor_run()), so every target that builds
+ * supervisor.c now needs protocol.c to link -- including M3, which
+ * predates the transport and has no CDC hardware wired up at all. On
+ * such a target the parser simply never receives a byte and this stub is
+ * never reached; defining it weakly here is what lets M3 link without
+ * either an #ifdef in supervisor.c or a fake transport file in M3's own
+ * source list. Same pattern as mdl_supervisor_wake_from_isr()'s weak
+ * default in mdl/core/registry.c, for the same reason.
+ */
+__attribute__((weak)) void mdl_transport_write(const uint8_t *data, uint32_t len)
+{
+    (void)data;
+    (void)len;
+}
+
 void mdl_proto_set_supervisor_handle(void *h)
 {
     s_supervisor_handle_for_proto = (TaskHandle_t)h;
@@ -48,26 +70,53 @@ static void reset_parser(void)
 void mdl_proto_rx_byte(uint8_t b)
 {
     switch (s_state) {
-    case RX_MAGIC:
-        s_magic_buf[s_field_pos++] = b;
-        if (s_field_pos == 4) {
-            uint32_t magic = (uint32_t)s_magic_buf[0] | ((uint32_t)s_magic_buf[1] << 8) |
-                              ((uint32_t)s_magic_buf[2] << 16) | ((uint32_t)s_magic_buf[3] << 24);
-            if (magic != MDL_PROTO_MAGIC) {
-                /* Not a frame start -- slide the window by one byte
-                 * instead of resyncing on every stray byte, so noise
-                 * before a real frame doesn't need exactly 4 clean
-                 * bytes to recover from. */
-                s_magic_buf[0] = s_magic_buf[1];
-                s_magic_buf[1] = s_magic_buf[2];
-                s_magic_buf[2] = s_magic_buf[3];
-                s_field_pos = 3;
-                return;
+    case RX_MAGIC: {
+        /*
+         * Demultiplex binary frames from typed console text.
+         *
+         * Match the magic INCREMENTALLY rather than filling a 4-byte
+         * window and testing it: a window would hold the three most
+         * recent bytes hostage until a fourth arrived, so an
+         * interactive typist would see the console run three characters
+         * behind, and pressing Enter would do nothing until three more
+         * keys were pressed. Matching byte by byte means a byte is only
+         * held while it could still turn out to be part of the magic;
+         * the moment the prefix breaks, everything held is released to
+         * the console in order.
+         *
+         * The magic is "MDLC" (all capitals), so ordinary lowercase
+         * commands are never held at all.
+         */
+        static const uint8_t magic_bytes[4] = {
+            (uint8_t)(MDL_PROTO_MAGIC & 0xFFu),
+            (uint8_t)((MDL_PROTO_MAGIC >> 8) & 0xFFu),
+            (uint8_t)((MDL_PROTO_MAGIC >> 16) & 0xFFu),
+            (uint8_t)((MDL_PROTO_MAGIC >> 24) & 0xFFu),
+        };
+
+        if (b == magic_bytes[s_field_pos]) {
+            s_magic_buf[s_field_pos++] = b;
+            if (s_field_pos == 4) {
+                s_state = RX_CMD;
+                s_field_pos = 0;
             }
-            s_state = RX_CMD;
-            s_field_pos = 0;
+            return;
+        }
+
+        /* Prefix broken. Release the bytes held so far to the console,
+         * then reconsider this byte as a possible fresh frame start. */
+        for (uint32_t i = 0; i < s_field_pos; i++) {
+            mdl_console_rx_byte(s_magic_buf[i]);
+        }
+        s_field_pos = 0;
+
+        if (b == magic_bytes[0]) {
+            s_magic_buf[s_field_pos++] = b;
+        } else {
+            mdl_console_rx_byte(b);
         }
         return;
+    }
 
     case RX_CMD:
         s_cmd = b;

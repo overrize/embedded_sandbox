@@ -17,6 +17,7 @@
 #include "task.h"
 #include "at32f435_437.h"
 #include "registry.h"
+#include "sandbox.h"
 #include "loader.h"
 #include "module_task.h"
 #include "host_api.h"
@@ -42,16 +43,10 @@ static void supervisor_task(void *pvParameters)
     host_api_init();
     mdl_supervisor_init();
 
-    extern uint8_t __mdl_text_start[], __mdl_text_end[];
-    extern uint8_t __mdl_data_start[], __mdl_data_end[];
-    extern uint8_t __mdl_heap_stack_start[], __mdl_heap_stack_end[];
-
-    g_mdl_slot.text_lo       = (uintptr_t)__mdl_text_start;
-    g_mdl_slot.text_hi       = (uintptr_t)__mdl_text_end;
-    g_mdl_slot.data_lo       = (uintptr_t)__mdl_data_start;
-    g_mdl_slot.data_hi       = (uintptr_t)__mdl_data_end;
-    g_mdl_slot.heap_stack_lo = (uintptr_t)__mdl_heap_stack_start;
-    g_mdl_slot.heap_stack_hi = (uintptr_t)__mdl_heap_stack_end;
+    /* Was an inline copy of these eight assignments (and it silently
+     * omitted guard_lo/guard_hi, which mdl_record_fault() classification
+     * depends on). sandbox_bounds_init() is that block, in one place. */
+    sandbox_bounds_init();
 
     size_t image_len = (size_t)(_binary_module_mdl_end - _binary_module_mdl_start);
     mdl_load_status_t st = mdl_load(&g_mdl_slot, _binary_module_mdl_start, image_len,
@@ -84,8 +79,10 @@ int main(void)
     NVIC_SetPriority(MemoryManagement_IRQn,
                       configMAX_SYSCALL_INTERRUPT_PRIORITY >> (8 - configPRIO_BITS));
 
+    /* portPRIVILEGE_BIT is mandatory for host tasks -- see the note next
+     * to MDL_LOADER_TASK_PRIORITY in FreeRTOSConfig.h. */
     xTaskCreate(supervisor_task, "supervisor", configMINIMAL_STACK_SIZE * 2,
-                NULL, MDL_LOADER_TASK_PRIORITY, NULL);
+                NULL, MDL_LOADER_TASK_PRIORITY | portPRIVILEGE_BIT, NULL);
 
     vTaskStartScheduler();
 

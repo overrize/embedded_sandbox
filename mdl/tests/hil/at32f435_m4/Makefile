@@ -6,10 +6,11 @@ TOOLCHAIN := arm-none-eabi-
 CC      := $(TOOLCHAIN)gcc
 SIZE    := $(TOOLCHAIN)size
 
-VENDOR  := ../../../../AT32F435_437_Firmware_Library_V2.2.6
+VENDOR  := ../../../../at32f435_lib/AT32F435_437_Firmware_Library_V2.2.6
 MDL     := ../../..
 M0      := ../at32f435_m0
 M2      := ../at32f435_m2
+COMMON  := ../common
 FRSRC   := $(VENDOR)/middlewares/freertos/source
 FRPORT  := $(MDL)/third_party/freertos_mpu_port
 USBDRV  := $(VENDOR)/middlewares/usb_drivers
@@ -30,12 +31,13 @@ INCLUDES := \
   -I$(MDL)/arch/arm_cm4 \
   -I$(MDL)/host \
   -I$(MDL)/transport \
+  -I$(COMMON) \
   -I$(FRSRC)/include \
   -I$(FRPORT) \
   -I$(USBDRV)/inc \
   -I$(USBCDC)
 
-DEFINES := -DAT32F435RGT7
+DEFINES := -DAT32F435VCT7
 
 CFLAGS := $(CPU_FLAGS) $(DEFINES) $(INCLUDES) \
   -std=c11 -O1 -g3 -Wall -Wextra \
@@ -44,7 +46,7 @@ CFLAGS := $(CPU_FLAGS) $(DEFINES) $(INCLUDES) \
 
 ASFLAGS := $(CPU_FLAGS) -x assembler-with-cpp
 
-LDSCRIPT := $(M2)/linker/AT32F435xG_MDL_MPU.ld
+LDSCRIPT := $(M2)/linker/AT32F435xC_MDL_MPU.ld
 LDFLAGS := $(CPU_FLAGS) -T$(LDSCRIPT) -Wl,-L$(MDL)/linker \
   -Wl,--gc-sections -Wl,-Map=$(BUILD)/firmware.map
 
@@ -52,6 +54,7 @@ C_SRCS := \
   main.c \
   $(M2)/freertos_hooks.c \
   $(MDL)/core/registry.c \
+  $(MDL)/core/sandbox.c \
   $(MDL)/core/loader.c \
   $(MDL)/core/crc32.c \
   $(MDL)/core/module_task.c \
@@ -62,9 +65,14 @@ C_SRCS := \
   $(MDL)/arch/arm_cm4/ctxsw_arm.c \
   $(MDL)/host/host_api.c \
   $(MDL)/transport/protocol.c \
+  $(MDL)/transport/console.c \
   $(MDL)/transport/usb_cdc.c \
+  $(COMMON)/board_clock.c \
+  $(COMMON)/board_debug.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_gpio.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_crm.c \
+  $(VENDOR)/libraries/drivers/src/at32f435_437_pwc.c \
+  $(VENDOR)/libraries/drivers/src/at32f435_437_flash.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_acc.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_misc.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_usb.c \
@@ -91,7 +99,7 @@ ASM_SRCS := \
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(C_SRCS))) \
         $(patsubst %.s,$(BUILD)/%.o,$(notdir $(ASM_SRCS)))
 
-vpath %.c . $(M2) $(MDL)/core $(MDL)/arch/arm_cm4 $(MDL)/host $(MDL)/transport \
+vpath %.c . $(M2) $(COMMON) $(MDL)/core $(MDL)/arch/arm_cm4 $(MDL)/host $(MDL)/transport \
   $(VENDOR)/libraries/drivers/src $(VENDOR)/libraries/cmsis/cm4/device_support \
   $(FRSRC) $(FRSRC)/portable/memmang $(FRSRC)/portable/common $(FRPORT) \
   $(USBDRV)/src $(USBCDC)

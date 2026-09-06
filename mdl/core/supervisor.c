@@ -1,7 +1,10 @@
 #include "supervisor.h"
+#include "host_api.h" /* g_host_api, host_api_pool_reset() -- supervisor.h
+                        * deliberately does NOT pull this in, see its comment */
 #include "loader.h"
 #include "module_task.h"
 #include "protocol.h"
+#include "console.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include <string.h>
@@ -12,6 +15,7 @@ void mdl_supervisor_init(void)
 {
     s_supervisor_handle = xTaskGetCurrentTaskHandle();
     mdl_proto_set_supervisor_handle((void *)s_supervisor_handle);
+    mdl_console_set_supervisor_handle((void *)s_supervisor_handle);
 }
 
 void mdl_supervisor_wake_from_isr(void)
@@ -35,6 +39,14 @@ static void reclaim_module(void)
     g_mdl_slot.state = MDL_SLOT_EMPTY;
     g_mdl_slot.entry = NULL;
     g_mdl_slot.last_active_tick = 0;
+}
+
+void mdl_supervisor_request_unload(void)
+{
+    if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
+        return; /* already unloaded -- not an error, same as MDL_CMD_UNLOAD */
+    }
+    reclaim_module();
 }
 
 static void handle_load(const uint8_t *payload, uint32_t len)
@@ -115,6 +127,16 @@ void mdl_supervisor_run(void)
             case MDL_CMD_UNLOAD: handle_unload();            break;
             case MDL_CMD_STATUS: handle_status();             break;
             }
+        }
+
+        /* A typed console line is handled here, in supervisor context,
+         * for the same reason a binary frame is: the USB RX task only
+         * assembles it. Every path that touches the module slot --
+         * fault recovery, watchdog, protocol, console -- therefore runs
+         * single-threaded in this one loop. */
+        char *line;
+        if (mdl_console_take_line(&line)) {
+            mdl_console_execute(line);
         }
     }
 }

@@ -8,6 +8,30 @@ bool arch_pc_in_range(uintptr_t pc, uintptr_t lo, uintptr_t hi)
     return pc >= lo && pc < hi;
 }
 
+/*
+ * Weak hook: give the fault somewhere to survive the reset below.
+ *
+ * Both arch_system_reset() calls in this file are unrecoverable host
+ * faults, and both used to be completely silent -- the reset wipes .bss,
+ * so mdl_record_fault()'s copy is gone by the time anyone can ask, and
+ * board_debug.c never sees these at all because MemManage is owned here,
+ * not there. The result was a device that rebooted with no evidence, for
+ * every host-side MemManage. A board layer with somewhere persistent to
+ * put it (mdl/tests/hil/common/board_debug.c uses a .noinit record)
+ * overrides this; targets without one keep the no-op and behave exactly
+ * as before.
+ *
+ * `stacked` is NULL when CFSR.MSTKERR says the exception frame was never
+ * written -- an implementation must not dereference it in that case.
+ */
+__attribute__((weak)) void arch_fault_persist(const char *which, uint32_t *stacked,
+                                              uint32_t cfsr, uint32_t mmfar)
+{
+    (void)which;
+    (void)stacked;
+    (void)cfsr;
+    (void)mmfar;
+}
 /* Not one of arch_if.h's five required functions -- an extra safety
  * primitive the fault handler needs for host-level (unrecoverable) faults. */
 void arch_system_reset(void)
@@ -46,8 +70,11 @@ static void mdl_memmanage_handler_c(uint32_t *stacked)
     if (cfsr & SCB_CFSR_MSTKERR_Msk) {
         /* Exception entry's own stacking failed -- CFSR.MSTKERR being set
          * means the frame at `stacked` was never written and must not be
-         * dereferenced. Nothing left here to record; go straight to a
-         * safe reset rather than read garbage. */
+         * dereferenced. CFSR still says which fault it was, so persist
+         * that much before resetting -- MSTKERR on its own already names
+         * the failure (the stack the exception tried to push onto was not
+         * writable), which is most of the answer. */
+        arch_fault_persist("MemManage MSTKERR (no usable frame)", 0, cfsr, 0xFFFFFFFFu);
         arch_system_reset();
         return;
     }
@@ -69,6 +96,12 @@ static void mdl_memmanage_handler_c(uint32_t *stacked)
          * "USB CDC 和 loader 任务在任何情况下都要活着" is a promise about
          * surviving MODULE crashes, not host bugs -- a host bug gets a
          * clean reset instead of limping on corrupted. */
+        /* mmfar was captured above, BEFORE the CFSR write-1-to-clear a few
+         * lines up: clearing MMARVALID makes SCB->MMFAR architecturally
+         * UNKNOWN, so re-reading the register here would record a value
+         * that looks authoritative and is not. */
+        arch_fault_persist("MemManage in HOST code (pc outside module text)",
+                           stacked, cfsr, mmfar);
         arch_system_reset();
         return;
     }

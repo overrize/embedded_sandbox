@@ -1,10 +1,10 @@
 # Vendor packages -- not ours to version, and huge. Re-download/re-extract
-# as needed; mdl/tests/hil/*/Makefile expects AT32F435_437_Firmware_Library_V2.2.6/
-# extracted next to this repo root.
-/AT32F435_437_Firmware_Library_V2.2.6/
-/AT32F435_437_Firmware_Library_V2.2.6.zip
-/Segger_AT32MCU_AddOn_Win32-X86_64_V2.0.21.zip
-/ARTERY_AT32_MCU_Cross_Reference_Table_CH_V202011.xlsx
+# as needed. Everything vendor-supplied now lives under at32f435_lib/, and
+# every Makefile under mdl/tests/hil/ resolves VENDOR to
+#   at32f435_lib/AT32F435_437_Firmware_Library_V2.2.6/
+# so that directory must exist (extracted from the zip beside it) before
+# anything builds.
+/at32f435_lib/
 
 # Build outputs
 build/
@@ -14,3 +14,15 @@ build/
 *.bin
 *.map
 *.mdl
+
+# Ozone per-user window/session state -- regenerated on every open, and
+# specific to one machine. The project file itself (mdl/mdl.jdebug) IS
+# versioned; this sidecar is not.
+*.jdebug.user
+
+# Python bytecode from the host-side tools
+__pycache__/
+*.pyc
+
+# Claude Code local session state (locks, per-machine settings)
+.claude/

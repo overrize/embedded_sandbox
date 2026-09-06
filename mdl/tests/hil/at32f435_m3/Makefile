@@ -15,7 +15,7 @@ OBJCOPY := $(TOOLCHAIN)objcopy
 SIZE    := $(TOOLCHAIN)size
 PYTHON  := python
 
-VENDOR  := ../../../../AT32F435_437_Firmware_Library_V2.2.6
+VENDOR  := ../../../../at32f435_lib/AT32F435_437_Firmware_Library_V2.2.6
 MDL     := ../../..
 M0      := ../at32f435_m0
 M2      := ../at32f435_m2
@@ -36,10 +36,11 @@ INCLUDES := \
   -I$(MDL)/core \
   -I$(MDL)/arch/arm_cm4 \
   -I$(MDL)/host \
+  -I$(MDL)/transport \
   -I$(FRSRC)/include \
   -I$(FRPORT)
 
-DEFINES := -DAT32F435RGT7
+DEFINES := -DAT32F435VCT7
 
 CFLAGS := $(CPU_FLAGS) $(DEFINES) $(INCLUDES) \
   -std=c11 -O1 -g3 -Wall -Wextra \
@@ -48,7 +49,7 @@ CFLAGS := $(CPU_FLAGS) $(DEFINES) $(INCLUDES) \
 
 ASFLAGS := $(CPU_FLAGS) -x assembler-with-cpp
 
-LDSCRIPT := $(M2)/linker/AT32F435xG_MDL_MPU.ld
+LDSCRIPT := $(M2)/linker/AT32F435xC_MDL_MPU.ld
 LDFLAGS := $(CPU_FLAGS) -T$(LDSCRIPT) -Wl,-L$(MDL)/linker \
   -Wl,--gc-sections -Wl,-Map=$(BUILD)/firmware.map
 
@@ -56,10 +57,13 @@ C_SRCS := \
   main.c \
   $(M2)/freertos_hooks.c \
   $(MDL)/core/registry.c \
+  $(MDL)/core/sandbox.c \
   $(MDL)/core/loader.c \
   $(MDL)/core/crc32.c \
   $(MDL)/core/module_task.c \
   $(MDL)/core/supervisor.c \
+  $(MDL)/transport/protocol.c \
+  $(MDL)/transport/console.c \
   $(MDL)/arch/arm_cm4/mpu_armv7m.c \
   $(MDL)/arch/arm_cm4/fault_arm.c \
   $(MDL)/arch/arm_cm4/reloc_arm.c \
@@ -85,7 +89,7 @@ OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(C_SRCS))) \
         $(patsubst %.s,$(BUILD)/%.o,$(notdir $(ASM_SRCS))) \
         $(BUILD)/module_mdl.o
 
-vpath %.c . $(M2) $(MDL)/core $(MDL)/arch/arm_cm4 $(MDL)/host \
+vpath %.c . $(M2) $(MDL)/core $(MDL)/arch/arm_cm4 $(MDL)/host $(MDL)/transport \
   $(VENDOR)/libraries/drivers/src $(VENDOR)/libraries/cmsis/cm4/device_support \
   $(FRSRC) $(FRSRC)/portable/memmang $(FRSRC)/portable/common $(FRPORT)
 vpath %.s $(VENDOR)/libraries/cmsis/cm4/device_support/startup/gcc

@@ -7,7 +7,7 @@ CC      := $(TOOLCHAIN)gcc
 OBJCOPY := $(TOOLCHAIN)objcopy
 SIZE    := $(TOOLCHAIN)size
 
-VENDOR  := ../../../../AT32F435_437_Firmware_Library_V2.2.6
+VENDOR  := ../../../../at32f435_lib/AT32F435_437_Firmware_Library_V2.2.6
 MDL     := ../../..
 M0      := ../at32f435_m0
 M1MOD   := ../../modules/hello
@@ -30,7 +30,7 @@ INCLUDES := \
   -I$(FRSRC)/include \
   -I$(FRPORT)
 
-DEFINES := -DAT32F435RGT7
+DEFINES := -DAT32F435VCT7
 
 CFLAGS := $(CPU_FLAGS) $(DEFINES) $(INCLUDES) \
   -std=c11 -O1 -g3 -Wall -Wextra \
@@ -39,7 +39,7 @@ CFLAGS := $(CPU_FLAGS) $(DEFINES) $(INCLUDES) \
 
 ASFLAGS := $(CPU_FLAGS) -x assembler-with-cpp
 
-LDSCRIPT := linker/AT32F435xG_MDL_MPU.ld
+LDSCRIPT := linker/AT32F435xC_MDL_MPU.ld
 LDFLAGS := $(CPU_FLAGS) -T$(LDSCRIPT) -Wl,-L$(MDL)/linker \
   -Wl,--gc-sections -Wl,-Map=$(BUILD)/firmware.map
 

@@ -61,7 +61,8 @@ _Min_Stack_Size = 0x400;
 
 MEMORY
 {
-FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 1024K
+/* AT32F435VCT7 (LQFP100): 256K flash, 384K SRAM -- 与厂商 AT32F435xC_FLASH.ld 一致 */
+FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 256K
 RAM (xrw)       : ORIGIN = 0x20000000, LENGTH = 384K
 }
 
@@ -164,13 +165,55 @@ SECTIONS
     PROVIDE_HIDDEN (__fini_array_end = .);
   } >FLASH
 
-  _sidata = LOADADDR(.data);
+  /*
+   * ============================================================
+   * .privileged_data MUST be inside the startup's copy range.
+   * ============================================================
+   *
+   * This was the bug behind the first real-hardware BusFault (2026-09-06)
+   * and, almost certainly, the long-standing QEMU PendSV blocker too.
+   *
+   * The vendor startup (startup_at32f435_437.s) does exactly two things
+   * to RAM: copy _sidata -> [_sdata, _edata), and zero [_sbss, _ebss).
+   * As originally written, this script computed
+   *
+   *     _sidata = LOADADDR(.data);
+   *
+   * and put _sdata at the start of .data -- so the 32KB .privileged_data
+   * section sitting between the two was covered by NEITHER loop, even
+   * though it is a loaded section with real initialisers in flash. Every
+   * FreeRTOS PRIVILEGED_DATA object (pxCurrentTCB, pxReadyTasksLists[],
+   * uxCurrentNumberOfTasks, uxCriticalNesting -- whose initialiser is
+   * 0xaaaaaaaa, not 0 -- and heap_4's ucHeap) therefore came up holding
+   * whatever was in SRAM at power-on.
+   *
+   * On hardware that meant pxCurrentTCB was garbage-non-NULL, so
+   * prvInitialiseTaskLists() never ran, so the first xTaskCreate() walked
+   * an uninitialised list and bus-faulted in vListInsertEnd. Under QEMU
+   * the same section came up all-zero instead, which accidentally fixes
+   * pxCurrentTCB but silently breaks uxCriticalNesting -- a different
+   * symptom from the same root cause.
+   *
+   * The fix: _sdata now marks the start of .privileged_data, not .data,
+   * and _sidata is that section's load address. Both sections are
+   * consecutive `AT> FLASH`, so their load addresses are contiguous and
+   * one memcpy still covers both. Do not move _sdata back into .data,
+   * and do not insert another loaded section between these two without
+   * extending the range again.
+   *
+   * Cost: the trailing ALIGN(32768) pads .privileged_data out to a full
+   * 32KB that now actually gets copied at boot. That padding was already
+   * being stored in flash before this change; only the copy is new, and
+   * a 32KB memcpy at 288MHz is not measurable next to USB enumeration.
+   */
+  _sidata = LOADADDR(.privileged_data);
 
   . = ALIGN(32768);
   .privileged_data :
   {
     . = ALIGN(32768);
     __privileged_data_start__ = .;
+    _sdata = .;                     /* copy range starts HERE, not at .data */
     *(privileged_data)
     . = ALIGN(32768);
     __privileged_data_end__ = .;
@@ -179,12 +222,11 @@ SECTIONS
   .data :
   {
     . = ALIGN(4);
-    _sdata = .;
     *(.data)
     *(.data*)
 
     . = ALIGN(4);
-    _edata = .;
+    _edata = .;                     /* ... and ends at the end of .data */
   } >RAM AT> FLASH
 
   . = ALIGN(4);
@@ -199,6 +241,30 @@ SECTIONS
     . = ALIGN(4);
     _ebss = .;
     __bss_end__ = _ebss;
+  } >RAM
+
+  /*
+   * Deliberately OUTSIDE _sbss.._ebss, so startup's zero loop skips it:
+   * this is the only RAM whose contents are expected to survive a reset.
+   *
+   * It exists because a fault on this board is self-erasing. A module
+   * fault parks the CPU in a handler, USB stops answering, the host
+   * drops the port, and whatever the handler recorded dies with the next
+   * reset -- so the one run that had the answer is also the one run that
+   * cannot report it. Recording the fault here and resetting on purpose
+   * turns that into: crash, come back, and read it out over the console
+   * (`fault`). Anything placed here MUST tolerate powering up as
+   * uninitialised garbage; board_debug.c's record carries its own magic
+   * for exactly that reason.
+   */
+  .noinit (NOLOAD) :
+  {
+    . = ALIGN(4);
+    __noinit_start__ = .;
+    *(.noinit)
+    *(.noinit*)
+    . = ALIGN(4);
+    __noinit_end__ = .;
   } >RAM
 
   ._user_heap_stack :

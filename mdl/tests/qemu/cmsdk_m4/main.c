@@ -141,10 +141,18 @@ int main(void)
      * so it actually runs and completes mdl_supervisor_init() during
      * watcher_task's own startup delay rather than merely being
      * schedulable before it. */
+    /* portPRIVILEGE_BIT is mandatory for host tasks -- see the note next
+     * to MDL_LOADER_TASK_PRIORITY in FreeRTOSConfig.h. Its absence here
+     * is the prime suspect for this target's long-standing "MemManage
+     * (CFSR.MUNSTKERR) on the second task switch" blocker: the same
+     * omission reproduced on real AT32F435 hardware on 2026-09-06 with
+     * exactly that CFSR value, and was fixed by adding this bit. The
+     * stack-size bump to *8 above was an earlier attempt at that bug and
+     * can probably go back to *2 once this is confirmed. */
     xTaskCreate(supervisor_task, "supervisor", configMINIMAL_STACK_SIZE * 8,
-                NULL, MDL_LOADER_TASK_PRIORITY, NULL);
+                NULL, MDL_LOADER_TASK_PRIORITY | portPRIVILEGE_BIT, NULL);
     xTaskCreate(watcher_task, "watcher", configMINIMAL_STACK_SIZE * 8,
-                NULL, MDL_LOADER_TASK_PRIORITY - 1, NULL);
+                NULL, (MDL_LOADER_TASK_PRIORITY - 1) | portPRIVILEGE_BIT, NULL);
 
     qemu_log("about to start scheduler\n");
     vTaskStartScheduler();

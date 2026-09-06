@@ -73,14 +73,73 @@ static bool ptr_owned_by_module(const void *p, size_t len)
 typedef struct {
     gpio_type *port;
     uint16_t   mask;
+    uint32_t   clock;
+    bool       is_output;
 } gpio_whitelist_entry_t;
 
-/* EXAMPLE whitelist -- adjust to your actual board before real use. */
+/*
+ * The UYUP-RPI-A-2.4 board's actual pins (schematic UYUP-RPI-A-2.4.pdf),
+ * replacing the PA0/PA1 placeholder this table shipped with. A module
+ * sees these as pin indices 0..3 and cannot reach anything else --
+ * host_api.h's gpio_set()/gpio_get() contract is unchanged, only what
+ * the indices mean.
+ *
+ * LED polarity: both LEDs sit between VDD and their pin through a 1k
+ * resistor, i.e. they are almost certainly active-LOW -- gpio_set(0, 0)
+ * lights LEDB. Read "almost certainly" literally: this was inferred from
+ * the schematic netlist, not measured. If the LED turns out inverted on
+ * the bench, that is a fact about the board, not a bug in this table.
+ *
+ * Buttons pull to GND when pressed (10k pull-ups R83/R84), so they are
+ * configured with the internal pull-up and read 1 when idle, 0 pressed.
+ */
 static const gpio_whitelist_entry_t g_gpio_whitelist[] = {
-    { GPIOA, GPIO_PINS_0 },
-    { GPIOA, GPIO_PINS_1 },
+    { GPIOD, GPIO_PINS_10, CRM_GPIOD_PERIPH_CLOCK, true  }, /* 0: LEDB  (PD10) */
+    { GPIOE, GPIO_PINS_15, CRM_GPIOE_PERIPH_CLOCK, true  }, /* 1: LEDG  (PE15) */
+    { GPIOA, GPIO_PINS_3,  CRM_GPIOA_PERIPH_CLOCK, false }, /* 2: BTN0  (PA3)  */
+    { GPIOE, GPIO_PINS_2,  CRM_GPIOE_PERIPH_CLOCK, false }, /* 3: BTN1  (PE2)  */
+};
+
+static const char *const g_gpio_names[] = {
+    "LEDB (PD10, out, active-low)",
+    "LEDG (PE15, out, active-low)",
+    "BTN0 (PA3,  in,  1=idle)",
+    "BTN1 (PE2,  in,  1=idle)",
 };
 #define GPIO_WHITELIST_COUNT (sizeof(g_gpio_whitelist) / sizeof(g_gpio_whitelist[0]))
+
+/*
+ * Configure every whitelisted pin. Until this existed, host_api_init()
+ * was an empty function and nothing ever put these pins into output or
+ * input mode -- gpio_set() wrote to a pin still in its reset state and
+ * changed nothing observable. Called from host_api_init(), privileged,
+ * once at boot.
+ */
+static void gpio_whitelist_init(void)
+{
+    for (size_t i = 0; i < GPIO_WHITELIST_COUNT; i++) {
+        const gpio_whitelist_entry_t *e = &g_gpio_whitelist[i];
+        gpio_init_type cfg;
+
+        crm_periph_clock_enable(e->clock, TRUE);
+        gpio_default_para_init(&cfg);
+        cfg.gpio_pins = e->mask;
+        if (e->is_output) {
+            cfg.gpio_mode           = GPIO_MODE_OUTPUT;
+            cfg.gpio_out_type       = GPIO_OUTPUT_PUSH_PULL;
+            cfg.gpio_pull           = GPIO_PULL_NONE;
+            cfg.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
+            gpio_init(e->port, &cfg);
+            /* Active-low LED: drive high = off, so a module that never
+             * touches the pin leaves it dark rather than lit. */
+            gpio_bits_write(e->port, e->mask, TRUE);
+        } else {
+            cfg.gpio_mode = GPIO_MODE_INPUT;
+            cfg.gpio_pull = GPIO_PULL_UP;
+            gpio_init(e->port, &cfg);
+        }
+    }
+}
 
 static const gpio_whitelist_entry_t *gpio_lookup(int pin)
 {
@@ -109,12 +168,36 @@ static void semihost_write0(const char *msg)
     __asm__ volatile("bkpt 0xAB" : : "r"(r0), "r"(r1) : "memory");
 }
 
+/*
+ * Where host->log() text actually goes.
+ *
+ * Weak default: ARM semihosting, and ONLY with a debugger attached.
+ * That guard is the whole point. `bkpt 0xAB` with DHCSR.C_DEBUGEN clear
+ * is not a no-op that quietly fails -- it raises a debug event which,
+ * with no debug monitor enabled, escalates straight to HardFault
+ * (HFSR.DEBUGEVT set, CFSR all zero, which reads like nothing at all
+ * went wrong). The first module that called log() on a standalone board
+ * therefore killed it, and left a fault record naming a HardFault with
+ * no fault-status bits to explain it.
+ *
+ * A build with a text transport overrides this -- mdl/transport/console.c
+ * sends it out the USB console instead, which is what the 'placeholder
+ * until M4's USB CDC' note above was always waiting for.
+ */
+__attribute__((weak)) void host_log_sink(const char *msg)
+{
+    if (CoreDebug->DHCSR & CoreDebug_DHCSR_C_DEBUGEN_Msk) {
+        semihost_write0(msg);
+        semihost_write0("\n");
+    }
+}
+
 #define LOG_MAX_LEN 127
 
 static void host_log_impl(const char *msg)
 {
     if (!ptr_owned_by_module(msg, 1)) {
-        semihost_write0("[host] log() rejected: msg not in module's own memory");
+        host_log_sink("[host] log() rejected: msg not in module's own memory");
         return;
     }
     char buf[LOG_MAX_LEN + 1];
@@ -128,8 +211,7 @@ static void host_log_impl(const char *msg)
         i++;
     }
     buf[i] = '\0';
-    semihost_write0(buf);
-    semihost_write0("\n");
+    host_log_sink(buf);
 }
 
 void host_log(const char *msg) MDL_SYSCALL_GATE;
@@ -180,6 +262,26 @@ int host_gpio_get(int pin)
     int ret = host_gpio_get_impl(pin);
     vPortResetPrivilege(was_priv);
     return ret;
+}
+
+/* Host-side, already-privileged, deliberately NOT watchdog-feeding --
+ * see host_api.h for why that distinction is the whole point. */
+int host_gpio_direct_set(int pin, int level)
+{
+    return host_gpio_set_impl(pin, level);
+}
+
+int host_gpio_direct_get(int pin)
+{
+    return host_gpio_get_impl(pin);
+}
+
+const char *host_gpio_name(int pin)
+{
+    if (pin < 0 || (size_t)pin >= GPIO_WHITELIST_COUNT) {
+        return NULL;
+    }
+    return g_gpio_names[pin];
 }
 
 /* ---- clock / delay -----------------------------------------------------
@@ -316,7 +418,8 @@ const host_api_t g_host_api = {
 
 void host_api_init(void)
 {
-    /* Nothing to do in M2 -- FreeRTOS owns the tick once
-     * vTaskStartScheduler() runs; there is no separate clock to arm
-     * here anymore (M1 had its own SysTick_Handler; M2 doesn't). */
+    /* No clock to arm: FreeRTOS owns the tick once vTaskStartScheduler()
+     * runs (M1 had its own SysTick_Handler; M2 onward doesn't). The pins
+     * the vtable exposes do still need configuring, though. */
+    gpio_whitelist_init();
 }

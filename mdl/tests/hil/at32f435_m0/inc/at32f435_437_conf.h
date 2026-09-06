@@ -16,8 +16,11 @@
 extern "C" {
 #endif
 
+/* UYUP-RPI-A-2.4 底板的 X2 是 24MHz (原理图: X2 24MHz + C11/C12 15pF ->
+ * OSC_IN/OSC_OUT)。厂商模板的默认值是 8MHz -- 照抄会让所有 PLL 计算差 3 倍。
+ * 见 mdl/tests/hil/common/board_clock.c 里的分频推导。 */
 #if !defined  HEXT_VALUE
-#define HEXT_VALUE                       ((uint32_t)8000000)
+#define HEXT_VALUE                       ((uint32_t)24000000)
 #endif
 
 #define HEXT_STARTUP_TIMEOUT             ((uint16_t)0x3000)

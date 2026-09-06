@@ -19,12 +19,20 @@
 #include "registry.h"
 #include "loader.h"
 #include "host_api.h"
+#include "board_clock.h"
 
 extern const uint8_t _binary_module_mdl_start[];
 extern const uint8_t _binary_module_mdl_end[];
 
 int main(void)
 {
+    /* First: 24MHz HEXT -> 288MHz. Must precede host_api_init(), which
+     * programs SysTick from system_core_clock. Reaching the line after
+     * this call at all is itself the on-board proof that the crystal
+     * oscillates and the PLL locks -- board_clock_init() spins forever
+     * if either fails. */
+    board_clock_init();
+
     registry_init();
     sandbox_init();
     host_api_init();

@@ -5,6 +5,23 @@
 module_t g_mdl_slot;
 mdl_fault_info_t g_mdl_last_fault;
 
+/*
+ * Weak no-op default for the arch layer's fault path.
+ *
+ * mdl/arch/arm_cm4/fault_arm.c calls mdl_supervisor_wake_from_isr() after
+ * classifying a fault as module-internal. On the RTOS targets (M2+)
+ * mdl/core/supervisor.c provides the real, strong definition and this one
+ * is discarded by the linker. On the bare-metal targets (M0/M1) there is
+ * no supervisor task to wake -- and no module task either, so the branch
+ * that calls it is unreachable -- but the reference still has to resolve
+ * at link time. Defining it weakly here, in the same file the arch layer
+ * already talks to for fault classification, keeps fault_arm.c free of
+ * any build-configuration #ifdef.
+ */
+__attribute__((weak)) void mdl_supervisor_wake_from_isr(void)
+{
+}
+
 void registry_init(void)
 {
     g_mdl_slot.state = MDL_SLOT_EMPTY;

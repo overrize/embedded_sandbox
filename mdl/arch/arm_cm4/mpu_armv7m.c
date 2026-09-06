@@ -111,6 +111,24 @@ void arch_setup_regions(const mdl_region_t *rs, size_t n)
     MPU->CTRL = MPU_CTRL_ENABLE_Msk | MPU_CTRL_PRIVDEFENA_Msk | MPU_CTRL_HFNMIENA_Msk;
     __DSB();
     __ISB();
+
+    /*
+     * Enable the MemManage exception itself. Without this bit a region
+     * violation is not "a MemManage fault that our handler sees" -- the
+     * MemManage exception is disabled, so the fault escalates straight to
+     * HardFault and MemManage_Handler() in fault_arm.c never runs at all.
+     *
+     * FreeRTOS-MPU's own prvSetupMPU() sets this too (third_party/
+     * freertos_mpu_port/port.c, portNVIC_MEM_FAULT_ENABLE), but that only
+     * runs from xPortStartScheduler() -- i.e. only on the M2+ targets.
+     * M0/M1 are bare-metal with no scheduler, so nothing enabled it there
+     * and every arena violation silently became a HardFault. Setting it
+     * here, next to the MPU enable it belongs with, covers both cases;
+     * port.c's later |= of the same bit is then a harmless no-op.
+     */
+    SCB->SHCSR |= SCB_SHCSR_MEMFAULTENA_Msk;
+    __DSB();
+    __ISB();
 }
 
 void arch_code_sync(void *addr, size_t len)

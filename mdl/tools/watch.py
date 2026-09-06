@@ -48,6 +48,20 @@ RESP_OK = 0x81
 RESP_ERROR = 0x82
 RESP_STATUS = 0x83
 
+# Text commands sent down the same CDC pipe right after a successful load,
+# to turn "the device said OK" into "here is the module's data, read back
+# out of the arena". Same port, same session, no reconnect: on a board
+# whose only power comes from that one USB cable, unplugging to run
+# console.py separately would reset the MCU and wipe the very module that
+# is being verified (modules live in SRAM -- flash persistence is F2, not
+# built yet).
+#
+# 0x20024000 is the arena's data base, fixed by the linker script, so the
+# first words dumped are the module's GOT (every slot should read
+# 0x2002xxxx -- a slot still holding a link-time address means relocation
+# didn't happen) followed by its own variables.
+VERIFY_CMDS = ["status", "mem 0x20024000 12"]
+
 MODULE_CFLAGS = [
     "-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv4-sp-d16",
     "-fPIC", "-msingle-pic-base", "-mpic-register=r9", "-mno-pic-data-is-text-relative",
@@ -108,6 +122,41 @@ def read_frame(ser, timeout_s: float = 5.0):
     return resp, payload
 
 
+def drain(ser, quiet_s: float = 0.35, cap_s: float = 3.0) -> str:
+    """Reads until the device has been quiet for `quiet_s` (or `cap_s` total).
+
+    The console has no end-of-output marker -- it is a human-facing text
+    stream, not a framed protocol -- so "it stopped talking" is the only
+    available terminator. The cap keeps a device that chatters forever
+    (an unloaded module's own prints, say) from hanging the tool.
+    """
+    out = bytearray()
+    deadline = time.time() + cap_s
+    quiet_until = time.time() + quiet_s
+    while time.time() < deadline and time.time() < quiet_until:
+        n = ser.in_waiting
+        if n:
+            out += ser.read(n)
+            quiet_until = time.time() + quiet_s
+        else:
+            time.sleep(0.02)
+    return out.decode("utf-8", errors="replace")
+
+
+def console_cmd(ser, cmd: str) -> str:
+    """Runs one text command on the device console and returns what it said.
+
+    Safe to interleave with the binary framing on the same port: the
+    firmware matches the MDLC magic byte by byte and hands anything that
+    fails the match to the console line editor (mdl/transport/protocol.c),
+    so plain text can never be mistaken for a frame header.
+    """
+    ser.reset_input_buffer()
+    ser.write(cmd.encode("ascii") + b"\r")
+    ser.flush()
+    return drain(ser)
+
+
 def compile_for_arm(module_c: Path, gcc: str) -> Path | None:
     build_dir = module_c.parent / "build"
     build_dir.mkdir(exist_ok=True)
@@ -147,7 +196,7 @@ def pack_module(so_path: Path, python_exe: str) -> Path | None:
     return mdl_path
 
 
-def push_module(mdl_path: Path, port: str, baud: int) -> None:
+def push_module(mdl_path: Path, port: str, baud: int, verify: bool = False) -> None:
     if serial is None:
         print("✗ pyserial not installed -- run: pip install pyserial", file=sys.stderr)
         return
@@ -160,6 +209,15 @@ def push_module(mdl_path: Path, port: str, baud: int) -> None:
             ser.write(frame)
             ser.flush()
             result = read_frame(ser)
+
+            # Still inside the same `with`, on purpose -- see VERIFY_CMDS.
+            if verify and result is not None and result[0] == RESP_OK:
+                print("✓ device: loaded and running")
+                for cmd in VERIFY_CMDS:
+                    find_step(f"verify: {cmd}")
+                    print(console_cmd(ser, cmd), end="")
+                print()
+                return
     except serial.SerialException as e:
         print(f"✗ could not open {port}: {e}")
         return
@@ -177,7 +235,8 @@ def push_module(mdl_path: Path, port: str, baud: int) -> None:
         print(f"(unexpected response code 0x{resp:02x})")
 
 
-def do_one_cycle(module_dir: Path, port: str, baud: int, gcc: str, python_exe: str) -> None:
+def do_one_cycle(module_dir: Path, port: str, baud: int, gcc: str, python_exe: str,
+                 verify: bool = False) -> None:
     module_c = module_dir / "module.c"
     t0 = time.time()
 
@@ -199,7 +258,7 @@ def do_one_cycle(module_dir: Path, port: str, baud: int, gcc: str, python_exe: s
         return
 
     find_step(f"pushing to {port}")
-    push_module(mdl_path, port, baud)
+    push_module(mdl_path, port, baud, verify)
 
     print(f"\n(total: {time.time() - t0:.2f}s)")
 
@@ -212,6 +271,10 @@ def main(argv=None) -> int:
     ap.add_argument("--gcc", default="arm-none-eabi-gcc")
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--once", action="store_true", help="run one cycle and exit, instead of watching")
+    ap.add_argument("--verify", action="store_true",
+                    help="after a successful load, run VERIFY_CMDS on the device console "
+                         "in the same port session and print the replies (use this when "
+                         "reconnecting would power-cycle the board and lose the module)")
     args = ap.parse_args(argv)
 
     module_c = args.module_dir / "module.c"
@@ -220,7 +283,8 @@ def main(argv=None) -> int:
         return 1
 
     if args.once:
-        do_one_cycle(args.module_dir, args.port, args.baud, args.gcc, args.python)
+        do_one_cycle(args.module_dir, args.port, args.baud, args.gcc, args.python,
+                     args.verify)
         return 0
 
     print(f"watching {module_c} -- Ctrl+C to stop")
@@ -230,7 +294,8 @@ def main(argv=None) -> int:
             mtime = module_c.stat().st_mtime
             if mtime != last_mtime:
                 last_mtime = mtime
-                do_one_cycle(args.module_dir, args.port, args.baud, args.gcc, args.python)
+                do_one_cycle(args.module_dir, args.port, args.baud, args.gcc, args.python,
+                             args.verify)
             time.sleep(0.3)
     except KeyboardInterrupt:
         print("\nstopped.")

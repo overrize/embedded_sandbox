@@ -96,7 +96,33 @@ extern unsigned int system_core_clock; /* set by SystemInit(), system_at32f435_4
 /* Priority band reservation (spec: "模块任务优先级必须低于所有系统任务
  * 和通信任务"). Module tasks always use MDL_MODULE_TASK_PRIORITY (see
  * mdl/core/module_task.h); every host-side task must use a priority
- * strictly greater than that. */
+ * strictly greater than that.
+ *
+ * HOST TASKS MUST ALSO BE CREATED WITH portPRIVILEGE_BIT:
+ *
+ *     xTaskCreate(fn, name, depth, arg,
+ *                 MDL_LOADER_TASK_PRIORITY | portPRIVILEGE_BIT, NULL);
+ *
+ * In FreeRTOS-MPU, plain xTaskCreate() produces an UNPRIVILEGED task
+ * unless that bit is OR-ed into uxPriority -- it is not a "restricted
+ * task" opt-in, it is the default. Every host task here needs privilege:
+ * they write g_mdl_slot in host .bss, program GPIO/CRM/OTG peripheral
+ * registers, and drive the USB stack, none of which is reachable from an
+ * unprivileged task.
+ *
+ * Leaving it out does not merely deny those accesses -- it faults the
+ * task before it runs a single line. xTaskCreate() takes the task stack
+ * from the FreeRTOS heap, heap_4's ucHeap is PRIVILEGED_DATA, and
+ * prvSetupMPU() covers the whole privileged_data section with a
+ * privileged-only region. So an unprivileged task's PSP points into
+ * memory it may not touch, and the first exception return to it raises
+ * MemManage with CFSR.MUNSTKERR (0x00000008). That was the real-hardware
+ * fault of 2026-09-06 and, before that, the QEMU "second task switch"
+ * blocker -- one missing bit, two long hunts.
+ *
+ * The ONE task that must NOT have it is the module task
+ * (mdl/core/module_task.c) -- being unprivileged is the entire point
+ * there, and it gets its stack from the arena, not from the heap. */
 #define MDL_MODULE_TASK_PRIORITY                 (1)
 #define MDL_LOADER_TASK_PRIORITY                 (configMAX_PRIORITIES - 3)
 #define MDL_USB_TASK_PRIORITY                    (configMAX_PRIORITIES - 2)

@@ -20,7 +20,10 @@ _Min_Stack_Size = 0x400;
 
 MEMORY
 {
-FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 1024K
+/* AT32F435VCT7 (LQFP100, UYUP-RPI-A-2.4 底板): 256K flash, 384K SRAM.
+ * 与厂商 libraries/cmsis/cm4/device_support/startup/gcc/linker/AT32F435xC_FLASH.ld
+ * 的 MEMORY 块一致 -- 那是这两个数字的权威来源, 不要凭型号名猜。 */
+FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 256K
 RAM (xrw)       : ORIGIN = 0x20000000, LENGTH = 384K
 }
 
@@ -110,6 +113,30 @@ SECTIONS
     . = ALIGN(4);
     _ebss = .;
     __bss_end__ = _ebss;
+  } >RAM
+
+  /*
+   * Deliberately OUTSIDE _sbss.._ebss, so startup's zero loop skips it:
+   * this is the only RAM whose contents are expected to survive a reset.
+   *
+   * It exists because a fault on this board is self-erasing. A module
+   * fault parks the CPU in a handler, USB stops answering, the host
+   * drops the port, and whatever the handler recorded dies with the next
+   * reset -- so the one run that had the answer is also the one run that
+   * cannot report it. Recording the fault here and resetting on purpose
+   * turns that into: crash, come back, and read it out over the console
+   * (`fault`). Anything placed here MUST tolerate powering up as
+   * uninitialised garbage; board_debug.c's record carries its own magic
+   * for exactly that reason.
+   */
+  .noinit (NOLOAD) :
+  {
+    . = ALIGN(4);
+    __noinit_start__ = .;
+    *(.noinit)
+    *(.noinit*)
+    . = ALIGN(4);
+    __noinit_end__ = .;
   } >RAM
 
   ._user_heap_stack :

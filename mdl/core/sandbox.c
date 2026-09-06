@@ -19,6 +19,23 @@ extern uint8_t __mdl_data_start[], __mdl_data_end[];
 extern uint8_t __mdl_heap_stack_start[], __mdl_heap_stack_end[];
 extern uint8_t __mdl_guard_start[], __mdl_guard_end[];
 
+void sandbox_bounds_init(void)
+{
+    /* Record the bounds so fault classification (M3), the console's
+     * `arena` command, and mdl_load()'s destination addresses all have
+     * somewhere authoritative to read them from. The slot itself stays
+     * MDL_SLOT_EMPTY -- bounds being known is not the same as a module
+     * being loaded. */
+    g_mdl_slot.text_lo       = (uintptr_t)__mdl_text_start;
+    g_mdl_slot.text_hi       = (uintptr_t)__mdl_text_end;
+    g_mdl_slot.data_lo       = (uintptr_t)__mdl_data_start;
+    g_mdl_slot.data_hi       = (uintptr_t)__mdl_data_end;
+    g_mdl_slot.heap_stack_lo = (uintptr_t)__mdl_heap_stack_start;
+    g_mdl_slot.heap_stack_hi = (uintptr_t)__mdl_heap_stack_end;
+    g_mdl_slot.guard_lo      = (uintptr_t)__mdl_guard_start;
+    g_mdl_slot.guard_hi      = (uintptr_t)__mdl_guard_end;
+}
+
 void sandbox_init(void)
 {
     /*
@@ -57,16 +74,5 @@ void sandbox_init(void)
 
     arch_setup_regions(regions, sizeof(regions) / sizeof(regions[0]));
 
-    /* Record the bounds so fault classification (M3) and this stage's
-     * self-test both have somewhere authoritative to read them from. The
-     * slot itself stays MDL_SLOT_EMPTY -- bounds being known is not the
-     * same as a module being loaded. */
-    g_mdl_slot.text_lo       = (uintptr_t)__mdl_text_start;
-    g_mdl_slot.text_hi       = (uintptr_t)__mdl_text_end;
-    g_mdl_slot.data_lo       = (uintptr_t)__mdl_data_start;
-    g_mdl_slot.data_hi       = (uintptr_t)__mdl_data_end;
-    g_mdl_slot.heap_stack_lo = (uintptr_t)__mdl_heap_stack_start;
-    g_mdl_slot.heap_stack_hi = (uintptr_t)__mdl_heap_stack_end;
-    g_mdl_slot.guard_lo      = (uintptr_t)__mdl_guard_start;
-    g_mdl_slot.guard_hi      = (uintptr_t)__mdl_guard_end;
+    sandbox_bounds_init();
 }

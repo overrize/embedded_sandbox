@@ -71,8 +71,10 @@ static void loader_task(void *pvParameters)
 
 int main(void)
 {
+    /* portPRIVILEGE_BIT is mandatory for host tasks -- see the note next
+     * to MDL_LOADER_TASK_PRIORITY in FreeRTOSConfig.h. */
     xTaskCreate(loader_task, "loader", configMINIMAL_STACK_SIZE * 2,
-                NULL, MDL_LOADER_TASK_PRIORITY, NULL);
+                NULL, MDL_LOADER_TASK_PRIORITY | portPRIVILEGE_BIT, NULL);
 
     vTaskStartScheduler();
 
