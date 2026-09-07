@@ -1,0 +1,31 @@
+# Line endings are decided HERE, not by whatever core.autocrlf each machine
+# happens to have set.
+#
+# Without this file the answer depends on the contributor's git config, and
+# the symptom is a diff full of whole-file changes that contain no changes.
+# That already cost one round of "did the convention change?" -- it had not,
+# because core.autocrlf=true was normalising to LF on commit all along, so
+# there was never a CRLF convention to violate. This makes that explicit
+# rather than incidental.
+#
+# LF everywhere, including on Windows: every tool in this project reads it
+# (PowerShell 5.1, arm-none-eabi-gcc, mingw32-make, Ozone), and one rule is
+# easier to keep true than a list of exceptions.
+* text=auto eol=lf
+
+# Binaries git must never touch. Most build outputs are .gitignore'd, but
+# these extensions get listed anyway so an accidentally committed one is not
+# silently corrupted by line-ending translation.
+*.pdf   binary
+*.zip   binary
+*.xlsx  binary
+*.png   binary
+*.jpg   binary
+*.ico   binary
+*.elf   binary
+*.bin   binary
+*.hex   binary
+*.map   binary
+*.o     binary
+*.so    binary
+*.mdl   binary

@@ -37,13 +37,21 @@ typedef struct {
     const char *who;
 } pin_owner_t;
 
+/* Both tables come from board_pins.def, which the packer parses too --
+ * see that file for why one source matters here specifically. */
+#define P(port, num) MDL_PIN(port, num)
+#define NONE         0xFFu
+#define HARD         PIN_HOST_HARD
+#define YIELDS       PIN_HOST_YIELDS
+
 static const pin_owner_t g_pin_owner[] = {
-    { MDL_PIN(0,  9), PIN_HOST_HARD,   "the DAP debug UART, PA9 TX"  },
-    { MDL_PIN(0, 10), PIN_HOST_HARD,   "the DAP debug UART, PA10 RX" },
-    { MDL_PIN(0, 11), PIN_HOST_HARD,   "USB OTGFS1 D-, PA11"         },
-    { MDL_PIN(0, 12), PIN_HOST_HARD,   "USB OTGFS1 D+, PA12"         },
-    { MDL_PIN(3, 10), PIN_HOST_YIELDS, "the host alive-blink LED"    },
-    { MDL_PIN(4, 15), PIN_HOST_YIELDS, "the host USB-link LED"       },
+#define MDL_PERIPH(k, i, n, p0, p1, p2, p3)
+#define MDL_GPIO_PIN(idx, pin, name)
+#define MDL_PIN_OWNER(pin, how, who) { (pin), (how), (who) },
+#include "board_pins.def"
+#undef MDL_PERIPH
+#undef MDL_GPIO_PIN
+#undef MDL_PIN_OWNER
 };
 #define PIN_OWNER_COUNT (sizeof(g_pin_owner) / sizeof(g_pin_owner[0]))
 
@@ -74,14 +82,15 @@ typedef struct {
 } periph_pins_t;
 
 static const periph_pins_t g_periph[] = {
-    { MDL_RES_KIND_I2C,   1, "I2C1 (PB6 SCL, PB7 SDA)",
-      { MDL_PIN(1, 6), MDL_PIN(1, 7) }, 2 },
-    { MDL_RES_KIND_UART,  1, "USART1 (PA9 TX, PA10 RX)",
-      { MDL_PIN(0, 9), MDL_PIN(0, 10) }, 2 },
-    { MDL_RES_KIND_UART,  2, "USART2 (PA2 TX, PA3 RX)",
-      { MDL_PIN(0, 2), MDL_PIN(0, 3) }, 2 },
-    { MDL_RES_KIND_TIMER, 3, "TMR3 (PA6 CH1, PA7 CH2, PB0 CH3, PB1 CH4)",
-      { MDL_PIN(0, 6), MDL_PIN(0, 7), MDL_PIN(1, 0), MDL_PIN(1, 1) }, 4 },
+#define MDL_PIN_OWNER(pin, how, who)
+#define MDL_GPIO_PIN(idx, pin, name)
+#define MDL_PERIPH(k, i, n, p0, p1, p2, p3) \
+    { MDL_RES_KIND_##k, (i), (n), { (p0), (p1), (p2), (p3) },            \
+      (uint8_t)(((p0) != NONE) + ((p1) != NONE) + ((p2) != NONE) + ((p3) != NONE)) },
+#include "board_pins.def"
+#undef MDL_PERIPH
+#undef MDL_GPIO_PIN
+#undef MDL_PIN_OWNER
 };
 #define PERIPH_COUNT (sizeof(g_periph) / sizeof(g_periph[0]))
 

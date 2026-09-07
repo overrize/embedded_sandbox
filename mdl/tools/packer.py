@@ -29,6 +29,9 @@ import sys
 import zlib
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+MDL_ROOT = HERE.parent
+
 MDL_MAGIC = 0x304C444D  # 'MDL0'
 ARCH_ARMV7M = 1
 
@@ -80,6 +83,104 @@ MDL_RELOC_DATA_BASE = 1
 
 class PackError(Exception):
     """Raised with an already-user-facing '✗ ...' message."""
+
+# ---- board pin facts, parsed from the SAME file the firmware compiles ----
+#
+# mdl/host/board_pins.def is included by mdl/host/host_resources.c with the
+# macros defined, and parsed here with a regex. One source, deliberately:
+# the packer refuses a conflicting MDL at build time and the firmware
+# refuses it at load time, and two hand-kept copies of this table would not
+# stay equal. The failure mode of drift is nasty -- a build that passes and
+# a device that refuses, the two disagreeing about a fact neither is
+# locally wrong about.
+BOARD_PINS_DEF = MDL_ROOT / "host" / "board_pins.def"
+
+RES_KIND = {"GPIO": 1, "I2C": 2, "UART": 3, "TIMER": 4}
+
+
+def _pin(port, num):
+    return (int(port) << 4) | int(num)
+
+
+def pin_name(pin):
+    return f"P{chr(ord('A') + (pin >> 4))}{pin & 0x0F}"
+
+
+class BoardPins:
+    """Peripheral -> pins, pin -> host holder, gpio index -> pin."""
+
+    def __init__(self, path=BOARD_PINS_DEF):
+        text = path.read_text(encoding="utf-8")
+        self.periph = {}   # (kind, id) -> (name, [pins])
+        self.owner = {}    # pin -> (HARD|YIELDS, who)
+        self.gpio = {}     # whitelist index -> (pin, name)
+
+        pin_re = r"P\(\s*(\d+)\s*,\s*(\d+)\s*\)|NONE"
+        for m in re.finditer(
+                r'MDL_PERIPH\(\s*(\w+)\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*,(.*?)\)\s*$',
+                text, re.S | re.M):
+            kind, inst, name, rest = m.groups()
+            pins = [_pin(a, b) for a, b in
+                    [g for g in re.findall(r"P\(\s*(\d+)\s*,\s*(\d+)\s*\)", rest)]]
+            self.periph[(RES_KIND[kind], int(inst))] = (name, pins)
+
+        for m in re.finditer(
+                r'MDL_PIN_OWNER\(\s*P\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*,\s*(\w+)\s*,\s*"([^"]*)"',
+                text):
+            a, b, how, who = m.groups()
+            self.owner[_pin(a, b)] = (how, who)
+
+        for m in re.finditer(
+                r'MDL_GPIO_PIN\(\s*(\d+)\s*,\s*P\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*,\s*"([^"]*)"',
+                text):
+            idx, a, b, name = m.groups()
+            self.gpio[int(idx)] = (_pin(a, b), name)
+
+        # A silent parse failure would turn every conflict check into a
+        # no-op that reports success, which is the one outcome worse than
+        # not having the check.
+        if not self.periph or not self.owner or not self.gpio:
+            raise PackError(f"could not parse {path} -- "
+                            f"{len(self.periph)} peripherals, {len(self.owner)} "
+                            f"owned pins, {len(self.gpio)} gpio rows")
+
+    def expand(self, kind, ident):
+        """One claim -> (name, [pins]), or (None, []) if unplaceable."""
+        if kind == RES_KIND["GPIO"]:
+            if ident not in self.gpio:
+                return None, []
+            pin, name = self.gpio[ident]
+            return name, [pin]
+        if (kind, ident) not in self.periph:
+            return None, []
+        return self.periph[(kind, ident)]
+
+
+def check_resource_conflicts(res_bytes, board):
+    """Refuse here what the device would refuse on load.
+
+    Only the statically decidable half is checkable: a claim against a pin
+    the host holds permanently, and two of this MDL's own claims landing on
+    the same pin. Both are facts about the image, so failing the build beats
+    failing the deploy -- by the time an MDL reaches a device, someone is
+    already waiting on it.
+    """
+    seen = {}
+    for off in range(0, len(res_bytes), 4):
+        kind, ident = res_bytes[off], res_bytes[off + 1]
+        name, pins = board.expand(kind, ident)
+        if name is None:
+            kn = next((k for k, v in RES_KIND.items() if v == kind), "?")
+            raise PackError(f"{kn.lower()} instance {ident} is not something this "
+                            f"board knows how to place")
+        for pin in pins:
+            how_who = board.owner.get(pin)
+            if how_who and how_who[0] == "HARD":
+                raise PackError(f"{name} needs {pin_name(pin)}, held by {how_who[1]}")
+            if pin in seen:
+                raise PackError(f"{name} and {seen[pin]} are both {pin_name(pin)} -- "
+                                f"one MDL cannot claim the same pin twice")
+            seen[pin] = name
 
 
 class Elf32:
@@ -197,6 +298,7 @@ def parse_host_abi_version(host_api_h: Path) -> int:
 
 def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
          name_hint: str = "",
+         allow_conflicts: bool = False,
          text_region_size: int, data_region_size: int) -> None:
     data = so_path.read_bytes()
     elf = Elf32(data)
@@ -378,6 +480,16 @@ def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
     # fact about the world, not about this file, so it is recorded as a
     # contract for the host to check at runtime rather than pretended to
     # be provable here.
+    # Pin-level conflicts, refused here rather than only on the device.
+    #
+    # allow_conflicts exists to keep the DEVICE's own check testable. That
+    # check is the last line of defence against an image that did not come
+    # through this packer, so it has to stay exercised -- and once this
+    # gate works, a deliberately-conflicting image can no longer be built
+    # by accident. Never pass it for anything real.
+    if not allow_conflicts:
+        check_resource_conflicts(res_bytes, BoardPins())
+
     if depth > MDL_EVT_QUEUE_MAX:
         raise PackError(f"MDL_MODULE_EVENTS asks for {depth} queue slots; the host "
                         f"provides {MDL_EVT_QUEUE_MAX}. Lower the depth, or drain "
@@ -483,6 +595,11 @@ def main(argv=None):
     ap.add_argument("--data-region-size", type=int, default=8 * 1024,
                      help="arena data region size in bytes -- got+data+bss must fit "
                           "(default: 8192, v1 arena)")
+    ap.add_argument("--allow-conflicts", action="store_true",
+                     help="pack even if the declared resources conflict. ONLY for "
+                          "building deliberately-bad images to test the device-side "
+                          "check, which is the last line of defence for images that "
+                          "did not come through this packer.")
     ap.add_argument("--name", default="",
                      help="name the device shows in `status`; defaults to the source "
                           "directory name")
@@ -497,6 +614,7 @@ def main(argv=None):
         hint = args.name or args.module_so.resolve().parent.parent.name
         pack(args.module_so, args.output_mdl,
              abi_ver=abi_ver, arch=args.arch, name_hint=hint,
+             allow_conflicts=args.allow_conflicts,
              text_region_size=args.text_region_size,
              data_region_size=args.data_region_size)
     except PackError as e:

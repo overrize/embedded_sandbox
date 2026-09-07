@@ -1,0 +1,77 @@
+/*
+ * board_pins.def -- the board's pin facts, in ONE place.
+ *
+ * Read by two very different programs:
+ *   mdl/host/host_resources.c   #includes it with the macros defined
+ *   mdl/tools/packer.py         parses it line by line
+ *
+ * It exists in this shape because the alternative is two copies. The
+ * packer has to know which pins USART2 occupies in order to refuse a
+ * conflicting MDL at BUILD time, and the firmware has to know the same
+ * thing to refuse it at LOAD time. Two hand-maintained copies of a table
+ * like this do not stay equal, and the failure mode is the worst kind:
+ * a build that passes and a device that refuses, or vice versa, with the
+ * two disagreeing about a fact neither of them is wrong about locally.
+ *
+ * Line-oriented on purpose, so the Python side can be a regex rather than
+ * a C parser.
+ *
+ *   P(port, num)  a physical pin; port 0 = GPIOA, 1 = GPIOB, ...
+ *   NONE          unused slot in a peripheral's pin list
+ *
+ * PIN ASSIGNMENTS are chip facts and come from the vendor's own examples,
+ * not from memory:
+ *   I2C1   PB6/PB7  examples/i2c/communication_int   (GPIO_MUX_4)
+ *   USART2 PA2/PA3  examples/usart/idle_detection    (GPIO_MUX_7)
+ *   TMR3   PA6/PA7  examples/tmr/cascade_synchro, input_capture (MUX_2)
+ *
+ * One row is NOT example-confirmed and is marked inline: TMR3 CH3/CH4 on
+ * PB0/PB1 come from the alternate-function table. A wrong row here yields
+ * a conflict report that is confidently incorrect, which is worse than a
+ * missing one.
+ */
+
+/* ---- peripheral -> the pins it occupies ------------------------------ */
+/* MDL_PERIPH(kind, instance, human name, pin0, pin1, pin2, pin3) */
+
+MDL_PERIPH(I2C,   1, "I2C1 (PB6 SCL, PB7 SDA)",
+           P(1, 6), P(1, 7), NONE, NONE)
+
+MDL_PERIPH(UART,  1, "USART1 (PA9 TX, PA10 RX)",
+           P(0, 9), P(0, 10), NONE, NONE)
+
+MDL_PERIPH(UART,  2, "USART2 (PA2 TX, PA3 RX)",
+           P(0, 2), P(0, 3), NONE, NONE)
+
+/* CH3/CH4 (PB0/PB1) from the AF table, not confirmed against an example. */
+MDL_PERIPH(TIMER, 3, "TMR3 (PA6 CH1, PA7 CH2, PB0 CH3, PB1 CH4)",
+           P(0, 6), P(0, 7), P(1, 0), P(1, 1))
+
+/* ---- physical pins the host holds ------------------------------------ */
+/* MDL_PIN_OWNER(pin, HARD|YIELDS, who)
+ *
+ * HARD   the host cannot give this up and still be a working host.
+ * YIELDS in use by courtesy; a declared claim wins and the host stands
+ *        down (main.c's indicator_task). Not a refusal.
+ */
+
+MDL_PIN_OWNER(P(0,  9), HARD,   "the DAP debug UART, PA9 TX")
+MDL_PIN_OWNER(P(0, 10), HARD,   "the DAP debug UART, PA10 RX")
+MDL_PIN_OWNER(P(0, 11), HARD,   "USB OTGFS1 D-, PA11")
+MDL_PIN_OWNER(P(0, 12), HARD,   "USB OTGFS1 D+, PA12")
+MDL_PIN_OWNER(P(3, 10), YIELDS, "the host alive-blink LED")
+MDL_PIN_OWNER(P(4, 15), YIELDS, "the host USB-link LED")
+
+/* ---- GPIO whitelist index -> physical pin ---------------------------- */
+/* MDL_GPIO_PIN(whitelist index, pin, name)
+ *
+ * Needed by both sides for the same reason: MDL_RES_GPIO(2) names an
+ * index, MDL_RES_UART(2) names a peripheral, and the only way to notice
+ * that both want PA3 is to put them in the same space.
+ */
+
+MDL_GPIO_PIN(0, P(3, 10), "LEDB (PD10, LED3 blue)")
+MDL_GPIO_PIN(1, P(4, 15), "LEDG (PE15, LED4 green)")
+MDL_GPIO_PIN(2, P(0,  3), "BTN0 (PA3, SW3)")
+MDL_GPIO_PIN(3, P(4,  2), "BTN1 (PE2, SW4)")
+MDL_GPIO_PIN(4, P(0,  9), "U1TX (PA9, DAP debug UART)")
