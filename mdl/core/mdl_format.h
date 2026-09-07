@@ -16,6 +16,14 @@
 
 #define MDL_MAGIC 0x304C444Du /* 'MDL0', little-endian on disk */
 
+/* Longest console command name a module may export, NUL included. */
+#define MDL_CMD_NAME_MAX 16u
+
+/* Name of the MDL itself, for `status` -- what a person calls the thing
+ * currently loaded. Distinct from cmd_name, which is the console command
+ * an MDL may export; most MDLs have a name and no command. */
+#define MDL_NAME_MAX 16u
+
 typedef enum {
     MDL_ARCH_ARMV7M = 1,
     MDL_ARCH_RV32   = 2,
@@ -34,6 +42,31 @@ typedef struct {
     uint32_t init_off;    /* module_init() offset relative to text start */
     uint32_t reloc_off;
     uint32_t reloc_count;
+
+    /* ---- ABI v2 additions (append-only, per maintain.md D3) ---- */
+
+    /* module_cmd() offset into text, Thumb bit set exactly like
+     * init_off. 0 means the module exports no console command, which is
+     * the normal case -- a module is not required to be interactive. */
+    uint32_t cmd_off;
+
+    /* Declared hardware claims: mdl_res_t[res_count] at res_off,
+     * relative to payload start. res_count == 0 means the module
+     * claims nothing, and with the runtime check in host_api.c that
+     * means it can touch no GPIO at all -- silence is not permission. */
+    uint32_t res_off;
+    uint32_t res_count;
+
+    /* Console command name, NUL-terminated; all zero when cmd_off is 0.
+     * Fixed-width rather than an offset because it is bounded, tiny, and
+     * the loader wants it before it has decided to copy any payload. */
+    char cmd_name[MDL_CMD_NAME_MAX];
+
+    /* Human-facing name of this MDL, NUL-terminated. The packer fills it
+     * from the source directory unless MDL_MODULE_NAME() overrides, so
+     * `status` can say which one is loaded without every author having
+     * to remember to declare anything. */
+    char name[MDL_NAME_MAX];
 } mdl_header_t;
 
 /*
@@ -73,6 +106,37 @@ typedef struct {
     uint8_t  kind;        /* mdl_reloc_kind_t */
     uint8_t  _reserved[3];
 } mdl_reloc_t;
+
+/*
+ * Declared hardware claims (ABI v2).
+ *
+ * The point of making a module SAY what it touches is that the host can
+ * refuse the load instead of discovering the conflict as a symptom. The
+ * concrete case this was built for: the host blinks LEDB (whitelist pin
+ * 0) once a second as its 'firmware alive' signal. A module driving the
+ * same pin does not crash anything -- it quietly turns that indicator
+ * into a lie, which is worse, because the one signal you use to decide
+ * whether the board is alive is the one that has stopped meaning
+ * anything.
+ *
+ * Enforced twice, deliberately (see host_api.c):
+ *   load time -- a claim the host already owns rejects the whole image,
+ *                before a single byte is copied into the arena;
+ *   call time -- gpio_set/gpio_get refuse a pin this module did not
+ *                declare. Without the second check a module could
+ *                declare pin 1 and drive pin 0 anyway, and the manifest
+ *                would be documentation rather than a constraint.
+ */
+typedef enum {
+    MDL_RES_KIND_NONE = 0,
+    MDL_RES_KIND_GPIO = 1, /* id = index into the host GPIO whitelist */
+} mdl_res_kind_t;
+
+typedef struct {
+    uint8_t kind; /* mdl_res_kind_t */
+    uint8_t id;
+    uint8_t _reserved[2];
+} mdl_res_t;
 
 /*
  * Permission flags for one MPU/PMP-backed region. MDL_PERM_NONE means no

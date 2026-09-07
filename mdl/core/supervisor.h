@@ -78,4 +78,27 @@ void mdl_supervisor_run(void) __attribute__((noreturn));
  */
 void mdl_supervisor_request_unload(void);
 
+/*
+ * Run the loaded module's module_cmd(argc, argv) and wait for it [ABI v2].
+ *
+ * Called from the console, i.e. from THIS task -- which is why it has to
+ * block rather than just post the work: the caller wants to print the
+ * result. The module runs in its own unprivileged task meanwhile; the
+ * console must never call module code itself, since the supervisor is
+ * privileged and doing so would run the module privileged too.
+ *
+ * Returns one of MDL_CMD_* below. On MDL_CMD_OK, *out_ret holds the
+ * module's own return value.
+ */
+typedef enum {
+    MDL_CMD_OK = 0,
+    MDL_CMD_NO_MODULE,   /* nothing loaded, or it exports no command */
+    MDL_CMD_NAME_MISMATCH,
+    MDL_CMD_START_FAILED, /* args too big for the arg block, or task creation failed */
+    MDL_CMD_TIMEOUT,      /* module still running after the deadline; it was killed */
+    MDL_CMD_FAULTED,
+} mdl_cmd_result_t;
+
+mdl_cmd_result_t mdl_supervisor_run_module_command(int argc, char **argv, int *out_ret);
+
 #endif /* MDL_SUPERVISOR_H */

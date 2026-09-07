@@ -64,4 +64,13 @@ bool arch_pc_in_range(uintptr_t pc, uintptr_t lo, uintptr_t hi);
  */
 int arch_call_privileged(void *entry, void *got_base, const void *arg0);
 
+/*
+ * Same, for the three-argument module_cmd(host, argc, argv) entry point
+ * [ABI v2]. A separate function rather than a varargs one because the
+ * whole point here is precise control over which argument lands in
+ * which register, and over r9.
+ */
+int arch_call_module3(void *entry, void *got_base,
+                       const void *a0, int a1, const void *a2);
+
 #endif /* MDL_ARCH_IF_H */

@@ -31,13 +31,107 @@ const char *mdl_load_status_str(mdl_load_status_t status)
     case MDL_LOAD_ERR_TEXT_TOO_BIG:  return "text section exceeds arena text region";
     case MDL_LOAD_ERR_DATA_TOO_BIG:  return "got+data+bss exceeds arena data region";
     case MDL_LOAD_ERR_BAD_RELOC:     return "reloc entry points outside the GOT area";
+    case MDL_LOAD_ERR_BAD_RES:       return "malformed resource claim";
+    case MDL_LOAD_ERR_RES_CONFLICT:  return "resource conflict";
     }
     return "unknown status";
+}
+
+/*
+ * Detail for the one failure whose useful message is not a constant:
+ * a resource conflict has to name the pin AND its current owner, or the
+ * person reading `RESP_ERROR resource conflict` learns nothing they
+ * could act on.
+ */
+static char g_detail[80];
+
+const char *mdl_load_detail(void)
+{
+    return g_detail;
+}
+
+static char *detail_put(char *w, const char *end, const char *text)
+{
+    while (*text != '\0' && w < end - 1) {
+        *w++ = *text++;
+    }
+    return w;
+}
+
+static char *detail_put_u32(char *w, const char *end, uint32_t v)
+{
+    char tmp[11];
+    int n = 0;
+    do {
+        tmp[n++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    } while (v != 0u && n < (int)sizeof(tmp));
+    while (n-- > 0 && w < end - 1) {
+        *w++ = tmp[n];
+    }
+    return w;
+}
+
+/*
+ * Who already owns a piece of hardware, or NULL if it is free.
+ *
+ * Weak because core/ has no idea what hardware exists -- that is the
+ * host layer's business (mdl/host/host_api.c supplies the real one). A
+ * build without a host layer keeps this stub, and then nothing is owned
+ * and every well-formed claim is granted, which is the right behaviour
+ * for M0/M1-style bare targets that have no competing host tasks.
+ */
+__attribute__((weak)) const char *mdl_res_owner(uint8_t kind, uint8_t id)
+{
+    (void)kind;
+    (void)id;
+    return NULL;
+}
+
+/*
+ * Runs BEFORE anything is copied into the arena, on purpose: a module
+ * that is going to be rejected must not have left half of itself in the
+ * text region first. Fills g_detail on conflict.
+ */
+static mdl_load_status_t check_resources(module_t *m, const mdl_res_t *res,
+                                          uint32_t count)
+{
+    uint32_t claimed = 0;
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (res[i].kind != (uint8_t)MDL_RES_KIND_GPIO) {
+            return MDL_LOAD_ERR_BAD_RES;
+        }
+        /* 32 because gpio_claimed is a uint32_t bitmap; the host
+         * whitelist is far shorter than that, and an id past its end is
+         * caught by mdl_res_owner() returning a not-whitelisted owner. */
+        if (res[i].id >= 32u) {
+            return MDL_LOAD_ERR_BAD_RES;
+        }
+
+        const char *owner = mdl_res_owner(res[i].kind, res[i].id);
+        if (owner != NULL) {
+            char *w = g_detail;
+            const char *end = g_detail + sizeof(g_detail);
+            w = detail_put(w, end, "gpio ");
+            w = detail_put_u32(w, end, res[i].id);
+            w = detail_put(w, end, " is owned by ");
+            w = detail_put(w, end, owner);
+            *w = '\0';
+            return MDL_LOAD_ERR_RES_CONFLICT;
+        }
+        claimed |= (1u << res[i].id);
+    }
+
+    m->gpio_claimed = claimed;
+    return MDL_LOAD_OK;
 }
 
 mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
                             uint16_t expected_abi_ver, mdl_arch_t expected_arch)
 {
+    g_detail[0] = '\0';
+
     if (image_len < sizeof(mdl_header_t)) {
         return MDL_LOAD_ERR_TOO_SMALL;
     }
@@ -84,6 +178,17 @@ mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
         }
     }
 
+    /* Resource arbitration, still before the first memcpy. */
+    if ((size_t)hdr->res_off + (size_t)hdr->res_count * sizeof(mdl_res_t) > payload_len) {
+        return MDL_LOAD_ERR_BAD_RES;
+    }
+    mdl_load_status_t res_st = check_resources(
+        m, (const mdl_res_t *)(payload + hdr->res_off), hdr->res_count);
+    if (res_st != MDL_LOAD_OK) {
+        m->gpio_claimed = 0;
+        return res_st;
+    }
+
     uint8_t *text_dst = (uint8_t *)m->text_lo;
     uint8_t *got_dst   = (uint8_t *)m->data_lo;
     uint8_t *data_dst  = got_dst + got_bytes;
@@ -107,6 +212,25 @@ mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
     arch_code_sync(text_dst, hdr->text_size);
 
     m->entry = text_dst + hdr->init_off;
+
+    for (uint32_t i = 0; i < MDL_NAME_MAX; i++) {
+        m->name[i] = hdr->name[i];
+    }
+    m->name[MDL_NAME_MAX - 1u] = '\0';
+
+    /* cmd_off carries the Thumb bit exactly like init_off, so a module
+     * that exports no command has cmd_off == 0 and is unambiguous. */
+    if (hdr->cmd_off != 0u) {
+        m->cmd_entry = text_dst + hdr->cmd_off;
+        for (uint32_t i = 0; i < MDL_CMD_NAME_MAX; i++) {
+            m->cmd_name[i] = hdr->cmd_name[i];
+        }
+        m->cmd_name[MDL_CMD_NAME_MAX - 1u] = '\0';
+    } else {
+        m->cmd_entry = NULL;
+        m->cmd_name[0] = '\0';
+    }
+
     m->state = MDL_SLOT_LOADED;
     return MDL_LOAD_OK;
 }

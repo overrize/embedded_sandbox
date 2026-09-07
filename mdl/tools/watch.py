@@ -163,8 +163,10 @@ def compile_for_arm(module_c: Path, gcc: str) -> Path | None:
     obj = build_dir / "module.o"
     so = build_dir / "module.so"
     host_inc = MDL_ROOT / "host"
+    core_inc = MDL_ROOT / "core"  # host_api.h pulls in mdl_format.h (shared wire format)
 
-    r = run([gcc, *MODULE_CFLAGS, f"-I{host_inc}", "-c", str(module_c), "-o", str(obj)])
+    r = run([gcc, *MODULE_CFLAGS, f"-I{host_inc}", f"-I{core_inc}",
+             "-c", str(module_c), "-o", str(obj)])
     if r.returncode != 0:
         print("✗ ARM compile failed:")
         print(r.stderr)
@@ -265,7 +267,8 @@ def do_one_cycle(module_dir: Path, port: str, baud: int, gcc: str, python_exe: s
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("module_dir", type=Path, help="directory containing module.c")
+    ap.add_argument("module_dir", type=Path,
+                    help="directory containing module.c, or a prebuilt .mdl to push as-is")
     ap.add_argument("--port", required=True, help="serial port (e.g. COM5, /dev/ttyACM0)")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--gcc", default="arm-none-eabi-gcc")
@@ -276,6 +279,18 @@ def main(argv=None) -> int:
                          "in the same port session and print the replies (use this when "
                          "reconnecting would power-cycle the board and lose the module)")
     args = ap.parse_args(argv)
+
+    # A prebuilt .mdl can be pushed straight through, skipping compile and
+    # pack entirely. Handing someone three finished modules to try is a
+    # different job from developing one, and should not require the ARM
+    # toolchain to be installed on the machine doing the pushing.
+    if args.module_dir.suffix == ".mdl":
+        if not args.module_dir.is_file():
+            print(f"no such file: {args.module_dir}", file=sys.stderr)
+            return 1
+        find_step(f"pushing {args.module_dir.name} to {args.port}")
+        push_module(args.module_dir, args.port, args.baud, args.verify)
+        return 0
 
     module_c = args.module_dir / "module.c"
     if not module_c.is_file():

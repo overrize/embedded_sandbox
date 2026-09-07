@@ -217,17 +217,30 @@ static void cmd_help(void)
     mdl_console_puts(
         "commands:\r\n"
         "  help              this list\r\n"
-        "  status            module slot state + last fault\r\n"
+        "  status            which MDL is loaded, and the last fault\r\n"
         "  clk               system_core_clock, as configured\r\n"
         "  arena             arena region addresses\r\n"
-        "  pins              gpio whitelist a module may touch\r\n"
+        "  pins              gpio pins, and who owns each one\r\n"
         "  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)\r\n"
         "  btn <i>           read whitelisted input pin i\r\n"
         "  mem <addr> [n]    dump n words (default 8) from addr\r\n"
         "  fault             fault record left by the previous run\r\n"
-        "  unload            unload the module, reclaim its resources\r\n"
+        "  ver               firmware build time + ABI version\r\n"
+        "  unload            unload the MDL, reclaim its resources\r\n");
+
+    /* A loaded module's own command is listed right next to the
+     * built-ins, because from where the user sits there is no
+     * difference: it is a command the device answers to now and did not
+     * answer to a moment ago. That difference IS the feature. */
+    if (g_mdl_slot.state != MDL_SLOT_EMPTY && g_mdl_slot.cmd_name[0] != 0) {
+        mdl_console_puts("  ");
+        mdl_console_puts(g_mdl_slot.cmd_name);
+        mdl_console_puts("            <- from the loaded MDL\r\n");
+    }
+
+    mdl_console_puts(
         "\r\n"
-        "binary .mdl images are pushed over this same port by\r\n"
+        "MDLs are pushed over this same port as binary frames by\r\n"
         "tools/watch.py -- typing here does not interfere with that.\r\n");
 }
 
@@ -260,7 +273,7 @@ __attribute__((weak)) void board_debug_print_fault(void (*out)(const char *))
 void host_log_sink(const char *msg);
 void host_log_sink(const char *msg)
 {
-    mdl_console_puts("[module] ");
+    mdl_console_puts("[mdl] ");
     mdl_console_puts(msg);
     mdl_console_puts("\r\n");
 }
@@ -274,10 +287,37 @@ static void cmd_fault(void)
     board_debug_print_fault(mdl_console_puts);
 }
 
+/*
+ * Supplied by the board layer when one is linked. Weak default so a
+ * build without board files still links -- same pattern as
+ * board_debug_print_fault() above.
+ */
+__attribute__((weak)) const char *board_build_id(void)
+{
+    return "(no board layer)";
+}
+
+static void cmd_ver(void)
+{
+    /* The point of this command: compare it against what build.ps1
+     * printed. If they differ, the download did not take -- Ozone
+     * caches the ELF from project load and will happily re-flash that
+     * cached copy after a rebuild. */
+    mdl_console_puts("build  : ");
+    mdl_console_puts(board_build_id());
+    mdl_console_puts("\r\nabi    : v");
+    put_u32((uint32_t)HOST_API_ABI_VERSION);
+    mdl_console_puts("   (an MDL packed for a different ABI is refused)\r\n");
+}
+
 static void cmd_status(void)
 {
     mdl_console_puts("slot   : ");
     mdl_console_puts(slot_state_str(g_mdl_slot.state));
+    if (g_mdl_slot.state != MDL_SLOT_EMPTY && g_mdl_slot.name[0] != 0) {
+        mdl_console_puts("   ");
+        mdl_console_puts(g_mdl_slot.name);
+    }
     mdl_console_puts("\r\nentry  : ");
     put_hex32((uint32_t)(uintptr_t)g_mdl_slot.entry);
 
@@ -350,6 +390,31 @@ static void cmd_pins(void)
         put_u32((uint32_t)i);
         mdl_console_puts("  ");
         mdl_console_puts(name);
+
+        /* Who has it. A module may claim only a pin with no host owner,
+         * and may touch only a pin it declared -- so this column is the
+         * answer to 'why was my module rejected'. */
+        /* Order matters: the CLAIM is the current truth, the host's own
+         * entry is only what would happen without one. Checking the host
+         * first reported that the host owned LEDB at a moment when it had
+         * already stopped driving it -- an owner column that contradicts
+         * the hardware is worse than no column. */
+        const char *owner = host_gpio_host_owner(i);
+        bool claimed = (g_mdl_slot.state != MDL_SLOT_EMPTY) &&
+                        ((g_mdl_slot.gpio_claimed & (1u << (unsigned)i)) != 0u);
+        if (claimed) {
+            mdl_console_puts("  [MDL");
+            if (owner != NULL) {
+                mdl_console_puts(", host yielded");
+            }
+            mdl_console_puts("]");
+        } else if (owner != NULL) {
+            mdl_console_puts("  [");
+            mdl_console_puts(owner);
+            mdl_console_puts("]");
+        } else {
+            mdl_console_puts("  [free]");
+        }
         mdl_console_puts("\r\n");
     }
 }
@@ -433,6 +498,7 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "btn")    == 0) cmd_btn(argc, argv);
     else if (strcmp(argv[0], "mem")    == 0) cmd_mem(argc, argv);
     else if (strcmp(argv[0], "fault")  == 0) cmd_fault();
+    else if (strcmp(argv[0], "ver")    == 0) cmd_ver();
     else if (strcmp(argv[0], "unload") == 0) {
         /* Reuses the binary protocol's own unload path rather than
          * duplicating reclaim logic: same code, same single-threaded
@@ -440,6 +506,34 @@ void mdl_console_execute(char *line)
          * cannot diverge in behaviour. */
         mdl_supervisor_request_unload();
         mdl_console_puts("unload requested\r\n");
+    } else if (g_mdl_slot.state != MDL_SLOT_EMPTY &&
+                g_mdl_slot.cmd_name[0] != 0 &&
+                strcmp(argv[0], g_mdl_slot.cmd_name) == 0) {
+        /* Straight to the supervisor, which restarts the module's own
+         * UNPRIVILEGED task at module_cmd() and waits for it. Calling
+         * the module from here would run it at this task's privilege
+         * and the sandbox would be worth nothing. */
+        int ret = 0;
+        mdl_cmd_result_t r = mdl_supervisor_run_module_command(argc, argv, &ret);
+        switch (r) {
+        case MDL_CMD_OK:
+            mdl_console_puts("MDL returned ");
+            put_u32((uint32_t)ret);
+            mdl_console_puts("\r\n");
+            break;
+        case MDL_CMD_TIMEOUT:
+            mdl_console_puts("MDL did not finish in time -- unloaded\r\n");
+            break;
+        case MDL_CMD_FAULTED:
+            mdl_console_puts("MDL faulted -- unloaded (see `status`)\r\n");
+            break;
+        case MDL_CMD_START_FAILED:
+            mdl_console_puts("could not start it (arguments too long?)\r\n");
+            break;
+        default:
+            mdl_console_puts("MDL refused the call\r\n");
+            break;
+        }
     } else {
         mdl_console_puts("unknown command: ");
         mdl_console_puts(argv[0]);
@@ -454,6 +548,6 @@ void mdl_console_greet(void)
     mdl_console_puts(
         "\r\n"
         "=== mdl console (AT32F435VCT7 / UYUP-RPI-A-2.4) ===\r\n"
-        "type `help`. binary .mdl pushes share this same port.\r\n"
+        "type `help`. MDL pushes share this same port.\r\n"
         "mdl> ");
 }

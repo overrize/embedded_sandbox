@@ -69,6 +69,7 @@ C_SRCS := \
   $(MDL)/transport/usb_cdc.c \
   $(COMMON)/board_clock.c \
   $(COMMON)/board_debug.c \
+  $(COMMON)/board_buildid.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_gpio.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_crm.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_pwc.c \
@@ -105,7 +106,7 @@ vpath %.c . $(M2) $(COMMON) $(MDL)/core $(MDL)/arch/arm_cm4 $(MDL)/host $(MDL)/t
   $(USBDRV)/src $(USBCDC)
 vpath %.s $(VENDOR)/libraries/cmsis/cm4/device_support/startup/gcc
 
-.PHONY: all clean
+.PHONY: all clean FORCE
 all: $(BUILD)/firmware.elf
 	$(SIZE) $(BUILD)/firmware.elf
 
@@ -114,6 +115,15 @@ $(BUILD):
 
 $(BUILD)/%.o: %.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# Rebuilt every single time, so its __DATE__/__TIME__ is the moment THIS
+# image was built rather than the last time the file changed. The device
+# reports it via the console's `ver`, which is how you tell a download
+# that actually took from one that silently flashed a cached ELF.
+$(BUILD)/board_buildid.o: $(COMMON)/board_buildid.c FORCE | $(BUILD)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+FORCE:
 
 $(BUILD)/%.o: %.s | $(BUILD)
 	$(CC) $(ASFLAGS) -c $< -o $@

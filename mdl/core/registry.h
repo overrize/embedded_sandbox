@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "mdl_format.h" /* MDL_CMD_NAME_MAX, mdl_res_t */
 
 /*
  * Module slot bookkeeping. v1 has exactly one slot -- the arena (see
@@ -52,6 +53,27 @@ struct module {
      * has no explicit "feed" call, so implicit-feed-via-any-host-call
      * is the only signal available without inventing a new ABI entry. */
     uint32_t last_active_tick;
+
+    /* ---- ABI v2: what the module declared about itself ---- */
+
+    /* module_cmd(), or NULL when the module exports no console command.
+     * Thumb bit already set, same as `entry`. */
+    void *cmd_entry;
+    char  cmd_name[MDL_CMD_NAME_MAX];
+
+    /* What `status` calls the thing currently loaded. */
+    char  name[MDL_NAME_MAX];
+
+    /* Bit i set = the module declared whitelist GPIO pin i. Checked at
+     * load time against what the host already owns, and again on every
+     * gpio_set/gpio_get call -- a module that declares one pin and
+     * drives another is refused at the call, not merely at the load. */
+    uint32_t gpio_claimed;
+
+    /* Return value of the most recent module_cmd() invocation. Written
+     * by the module task through the syscall gate, read by the
+     * supervisor once the slot goes back to MDL_SLOT_LOADED. */
+    int cmd_ret;
 };
 typedef struct module module_t;
 

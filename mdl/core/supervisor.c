@@ -39,6 +39,21 @@ static void reclaim_module(void)
     g_mdl_slot.state = MDL_SLOT_EMPTY;
     g_mdl_slot.entry = NULL;
     g_mdl_slot.last_active_tick = 0;
+
+    /* Everything the MDL declared about itself goes too.
+     *
+     * gpio_claimed is the one that bites: host_gpio_yielded_to_module()
+     * reads it without consulting slot state, so a stale claim left here
+     * kept main.c's indicator task standing down forever and the alive
+     * LED never came back after an unload. The other fields happened to
+     * be harmless only because `help` and `pins` check the state first --
+     * which is not a property to rely on, it is the next bug waiting for
+     * someone to add a fourth reader that forgets. */
+    g_mdl_slot.gpio_claimed = 0;
+    g_mdl_slot.cmd_entry    = NULL;
+    g_mdl_slot.cmd_name[0]  = '\0';
+    g_mdl_slot.name[0]      = '\0';
+    g_mdl_slot.cmd_ret      = 0;
 }
 
 void mdl_supervisor_request_unload(void)
@@ -62,8 +77,26 @@ static void handle_load(const uint8_t *payload, uint32_t len)
     mdl_load_status_t st = mdl_load(&g_mdl_slot, payload, len,
                                      HOST_API_ABI_VERSION, MDL_ARCH_ARMV7M);
     if (st != MDL_LOAD_OK) {
+        /* A resource conflict is the one failure whose generic status
+         * string is useless alone -- 'resource conflict' does not say
+         * which pin, or who holds it. mdl_load_detail() carries that. */
         const char *msg = mdl_load_status_str(st);
-        mdl_proto_send_response(MDL_RESP_ERROR, msg, (uint32_t)strlen(msg));
+        const char *detail = mdl_load_detail();
+        if (detail[0] != 0) {
+            char buf[112];
+            size_t n = 0;
+            for (const char *q = msg; *q != 0 && n < sizeof(buf) - 2u; q++) {
+                buf[n++] = *q;
+            }
+            buf[n++] = ':';
+            buf[n++] = ' ';
+            for (const char *q = detail; *q != 0 && n < sizeof(buf); q++) {
+                buf[n++] = *q;
+            }
+            mdl_proto_send_response(MDL_RESP_ERROR, buf, (uint32_t)n);
+        } else {
+            mdl_proto_send_response(MDL_RESP_ERROR, msg, (uint32_t)strlen(msg));
+        }
         return;
     }
 
@@ -93,6 +126,52 @@ static void handle_status(void)
     status.fault_pc = g_mdl_last_fault.occurred ? g_mdl_last_fault.pc : 0;
     status.fault_text_offset = g_mdl_last_fault.occurred ? g_mdl_last_fault.text_offset : 0xFFFFFFFFu;
     mdl_proto_send_response(MDL_RESP_STATUS, &status, sizeof(status));
+}
+
+/*
+ * How long a console command may run before the supervisor takes the
+ * module out. This is the watchdog for this path: mdl_supervisor_run()'s
+ * own watchdog loop is not executing while we sit here waiting, because
+ * we ARE that task. Generous enough for a human-scale command (the demo
+ * module blinks an LED for a couple of seconds), short enough that a
+ * module stuck in while(1){} does not wedge the console for good.
+ */
+#define MDL_CMD_TIMEOUT_MS 5000u
+#define MDL_CMD_POLL_MS      10u
+
+mdl_cmd_result_t mdl_supervisor_run_module_command(int argc, char **argv, int *out_ret)
+{
+    if (g_mdl_slot.state != MDL_SLOT_LOADED || g_mdl_slot.cmd_entry == NULL) {
+        return MDL_CMD_NO_MODULE;
+    }
+    if (argc < 1 || strcmp(argv[0], g_mdl_slot.cmd_name) != 0) {
+        return MDL_CMD_NAME_MISMATCH;
+    }
+
+    if (!mdl_start_module_cmd_task(&g_mdl_slot, &g_host_api, argc,
+                                    (const char *const *)argv)) {
+        return MDL_CMD_START_FAILED;
+    }
+
+    /* The module task is strictly lower priority than this one, so it
+     * only runs while we are blocked in vTaskDelay(). Polling the slot
+     * state is therefore both simple and sufficient -- no notification
+     * plumbing, and no risk of racing the module's own completion. */
+    for (uint32_t waited = 0; waited < MDL_CMD_TIMEOUT_MS; waited += MDL_CMD_POLL_MS) {
+        vTaskDelay(pdMS_TO_TICKS(MDL_CMD_POLL_MS));
+
+        if (g_mdl_slot.state == MDL_SLOT_LOADED) {
+            *out_ret = g_mdl_slot.cmd_ret;
+            return MDL_CMD_OK;
+        }
+        if (g_mdl_slot.state == MDL_SLOT_FAULTED) {
+            reclaim_module();
+            return MDL_CMD_FAULTED;
+        }
+    }
+
+    reclaim_module();
+    return MDL_CMD_TIMEOUT;
 }
 
 void mdl_supervisor_run(void)

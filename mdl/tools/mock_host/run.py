@@ -56,7 +56,7 @@ def main(argv=None) -> int:
     cflags = [
         cc,
         "-std=c11", "-Wall", "-Wextra", "-g", "-O0",
-        f"-I{HERE}", f"-I{host_inc}",
+        f"-I{HERE}", f"-I{host_inc}", f"-I{host_inc.parent / 'core'}",
         str(args.module_c), str(HERE / "mock_api.c"), str(HERE / "main.c"),
         "-o", str(exe),
     ]

@@ -104,7 +104,7 @@ $(BUILD):
 MODULE_CFLAGS := $(CPU_FLAGS) \
   -fPIC -msingle-pic-base -mpic-register=r9 -mno-pic-data-is-text-relative \
   -ffunction-sections -fdata-sections -nostdlib -nostartfiles \
-  -O1 -g -Wall -Wextra -I$(MDL)/host
+  -O1 -g -Wall -Wextra -I$(MDL)/host -I$(MDL)/core
 
 MODULE_LDFLAGS := $(CPU_FLAGS) -nostdlib -shared -Wl,-Bsymbolic \
   -Wl,--no-undefined -Wl,--gc-sections -static-libgcc

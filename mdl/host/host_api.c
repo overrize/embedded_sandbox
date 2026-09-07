@@ -75,6 +75,11 @@ typedef struct {
     uint16_t   mask;
     uint32_t   clock;
     bool       is_output;
+    /* false = listed so it can be REFUSED by name, never configured.
+     * PA9/PA10 are the DAP debug UART; calling gpio_init() on them takes
+     * the console away, which is precisely the outcome the entry exists
+     * to prevent. */
+    bool       configure;
 } gpio_whitelist_entry_t;
 
 /*
@@ -90,23 +95,138 @@ typedef struct {
  * the schematic netlist, not measured. If the LED turns out inverted on
  * the bench, that is a fact about the board, not a bug in this table.
  *
+ * Silkscreen mapping, read off the schematic's LED+BUTTON+INTERFACE
+ * sheet rather than guessed: SW3 is PA3_BTN0 and SW4 is PE2_BTN1; LED3
+ * is PD10_LEDB (blue) and LED4 is PE15_LEDG (green). Both LEDs sit with
+ * their cathode on the MCU pin and a 1k resistor up to VDD, so the pin
+ * SINKS the current and driving it LOW is what lights them.
+ *
  * Buttons pull to GND when pressed (10k pull-ups R83/R84), so they are
  * configured with the internal pull-up and read 1 when idle, 0 pressed.
  */
 static const gpio_whitelist_entry_t g_gpio_whitelist[] = {
-    { GPIOD, GPIO_PINS_10, CRM_GPIOD_PERIPH_CLOCK, true  }, /* 0: LEDB  (PD10) */
-    { GPIOE, GPIO_PINS_15, CRM_GPIOE_PERIPH_CLOCK, true  }, /* 1: LEDG  (PE15) */
-    { GPIOA, GPIO_PINS_3,  CRM_GPIOA_PERIPH_CLOCK, false }, /* 2: BTN0  (PA3)  */
-    { GPIOE, GPIO_PINS_2,  CRM_GPIOE_PERIPH_CLOCK, false }, /* 3: BTN1  (PE2)  */
+    { GPIOD, GPIO_PINS_10, CRM_GPIOD_PERIPH_CLOCK, true,  true  }, /* 0: LEDB  (PD10) */
+    { GPIOE, GPIO_PINS_15, CRM_GPIOE_PERIPH_CLOCK, true,  true  }, /* 1: LEDG  (PE15) */
+    { GPIOA, GPIO_PINS_3,  CRM_GPIOA_PERIPH_CLOCK, false, true  }, /* 2: BTN0  (PA3)  */
+    { GPIOE, GPIO_PINS_2,  CRM_GPIOE_PERIPH_CLOCK, false, true  }, /* 3: BTN1  (PE2)  */
+    { GPIOA, GPIO_PINS_9,  CRM_GPIOA_PERIPH_CLOCK, false, false }, /* 4: U1TX  (PA9)  */
 };
 
 static const char *const g_gpio_names[] = {
-    "LEDB (PD10, out, active-low)",
-    "LEDG (PE15, out, active-low)",
-    "BTN0 (PA3,  in,  1=idle)",
-    "BTN1 (PE2,  in,  1=idle)",
+    "LEDB (PD10, LED3 blue,  out, 0=lit)",
+    "LEDG (PE15, LED4 green, out, 0=lit)",
+    "BTN0 (PA3,  SW3, in,  1=idle)",
+    "BTN1 (PE2,  SW4, in,  1=idle)",
+    "U1TX (PA9,  DAP debug UART -- never a module's to take)",
 };
 #define GPIO_WHITELIST_COUNT (sizeof(g_gpio_whitelist) / sizeof(g_gpio_whitelist[0]))
+
+/*
+ * Pins the HOST keeps for itself, and why -- NULL means a module may
+ * claim it.
+ *
+ * Pin 0 is the case this whole mechanism exists for. main.c's
+ * indicator_task blinks LEDB once a second as the 'firmware is alive'
+ * signal, which is the one thing you look at to decide whether the board
+ * is running at all when USB is dead. A module driving the same pin
+ * crashes nothing; it just makes that signal meaningless, and a
+ * meaningless liveness indicator is worse than none, because it is
+ * still believed. Two owners with no arbitration is the bug, not the
+ * flicker it produces.
+ */
+/*
+ * How firmly the host holds each pin.
+ *
+ * HARD is a refusal: the pin does something the host cannot stop doing
+ * and still be a working host.
+ *
+ * YIELD is the interesting one, and it is what LEDB is. The host blinks
+ * it once a second as its 'firmware alive' signal, so by default it is
+ * in use -- but that is a courtesy, not a requirement, and a module that
+ * explicitly declares the pin gets it. What must not happen is the
+ * UNDECLARED case: two writers, no arbitration, and a liveness indicator
+ * that has quietly stopped meaning anything while still being believed.
+ * Declaring it is what turns a collision into a handover.
+ */
+typedef enum {
+    GPIO_FREE = 0,
+    GPIO_HOST_YIELDS,
+    GPIO_HOST_HARD,
+} gpio_ownership_t;
+
+typedef struct {
+    gpio_ownership_t how;
+    const char      *who;
+} gpio_owner_t;
+
+static const gpio_owner_t g_gpio_owner[GPIO_WHITELIST_COUNT] = {
+    { GPIO_HOST_YIELDS, "host alive-blink (yields if you declare it)" }, /* 0: LEDB */
+    { GPIO_HOST_YIELDS, "host USB-link LED (yields if you declare it)" }, /* 1: LEDG */
+    { GPIO_FREE,        NULL },                                           /* 2: BTN0 */
+    { GPIO_FREE,        NULL },                                           /* 3: BTN1 */
+    { GPIO_HOST_HARD,   "the DAP debug UART (PA9/PA10)" },                /* 4: U1TX */
+};
+
+/*
+ * True while a module has declared this pin, so the host's own indicator
+ * task can stand down instead of fighting it. Checked by main.c.
+ */
+bool host_gpio_yielded_to_module(int pin)
+{
+    if (pin < 0 || (size_t)pin >= GPIO_WHITELIST_COUNT) {
+        return false;
+    }
+    if (g_gpio_owner[pin].how != GPIO_HOST_YIELDS) {
+        return false;
+    }
+    /* An empty slot cannot be holding anything, whatever gpio_claimed
+     * still says. reclaim_module() clears it now, but this is the check
+     * that makes forgetting to harmless rather than a dark LED. */
+    if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
+        return false;
+    }
+    return (g_mdl_slot.gpio_claimed & (1u << (unsigned)pin)) != 0u;
+}
+
+/*
+ * Strong override of loader.c's weak hook: answers 'is this already
+ * spoken for' at LOAD time, before any of the image is copied in.
+ */
+const char *mdl_res_owner(uint8_t kind, uint8_t id)
+{
+    if (kind != (uint8_t)MDL_RES_KIND_GPIO) {
+        return "an unknown resource class";
+    }
+    if (id >= GPIO_WHITELIST_COUNT) {
+        return "nothing -- that pin is not on the whitelist at all";
+    }
+    /* Only a HARD claim refuses the load. A YIELDS pin is granted, and
+     * the host stops driving it -- see host_gpio_yielded_to_module(). */
+    return (g_gpio_owner[id].how == GPIO_HOST_HARD) ? g_gpio_owner[id].who : NULL;
+}
+
+const char *host_gpio_host_owner(int pin)
+{
+    if (pin < 0 || (unsigned)pin >= GPIO_WHITELIST_COUNT) {
+        return NULL;
+    }
+    return g_gpio_owner[pin].who;
+}
+
+/*
+ * The second half of the two-stage check (mdl_format.h's mdl_res_t
+ * comment explains why one stage is not enough): the loader already
+ * refused conflicting CLAIMS, this refuses USE of anything the module
+ * did not claim. Without it a module could declare pin 1 and drive pin
+ * 0 anyway, and the manifest would be a comment rather than a rule.
+ */
+static bool module_claimed(int pin)
+{
+    if (pin < 0 || pin >= 32) {
+        return false;
+    }
+    return (g_mdl_slot.gpio_claimed & (1u << (unsigned)pin)) != 0u;
+}
 
 /*
  * Configure every whitelisted pin. Until this existed, host_api_init()
@@ -119,6 +239,9 @@ static void gpio_whitelist_init(void)
 {
     for (size_t i = 0; i < GPIO_WHITELIST_COUNT; i++) {
         const gpio_whitelist_entry_t *e = &g_gpio_whitelist[i];
+        if (!e->configure) {
+            continue; /* listed to be refused, not to be driven */
+        }
         gpio_init_type cfg;
 
         crm_periph_clock_enable(e->clock, TRUE);
@@ -228,9 +351,10 @@ void host_log(const char *msg)
 static int host_gpio_set_impl(int pin, int level)
 {
     const gpio_whitelist_entry_t *e = gpio_lookup(pin);
-    if (e == NULL) {
-        return -1;
+    if (e == NULL || !e->configure) {
+        return -1; /* unknown, or listed only so it can be refused */
     }
+
     gpio_bits_write(e->port, e->mask, level ? TRUE : FALSE);
     return 0;
 }
@@ -240,7 +364,12 @@ int host_gpio_set(int pin, int level)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
     feed_watchdog();
-    int ret = host_gpio_set_impl(pin, level);
+    /* Deliberately here and NOT in host_gpio_set_impl(): the claim is a
+     * constraint on MODULES, not a property of the pin. Putting it in the
+     * shared impl also gated host_gpio_direct_set(), so with no module
+     * loaded the board's own alive-blink and USB-link LEDs went dark --
+     * the host refusing itself permission to use its own hardware. */
+    int ret = module_claimed(pin) ? host_gpio_set_impl(pin, level) : -1;
     vPortResetPrivilege(was_priv);
     return ret;
 }
@@ -248,9 +377,10 @@ int host_gpio_set(int pin, int level)
 static int host_gpio_get_impl(int pin)
 {
     const gpio_whitelist_entry_t *e = gpio_lookup(pin);
-    if (e == NULL) {
+    if (e == NULL || !e->configure) {
         return -1;
     }
+
     return (gpio_input_data_bit_read(e->port, e->mask) == SET) ? 1 : 0;
 }
 
@@ -259,7 +389,9 @@ int host_gpio_get(int pin)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
     feed_watchdog();
-    int ret = host_gpio_get_impl(pin);
+    /* Reading is a claim too -- it says this pin is yours to observe.
+     * Same placement reasoning as host_gpio_set(). */
+    int ret = module_claimed(pin) ? host_gpio_get_impl(pin) : -1;
     vPortResetPrivilege(was_priv);
     return ret;
 }
@@ -331,7 +463,12 @@ static free_block_t *g_free_list;
 
 void host_api_pool_reset(module_t *m)
 {
-    g_pool_next  = (uint8_t *)m->heap_stack_lo;
+    /* The first MDL_ARGBLOCK_SIZE bytes of the heap region are the
+     * console-argument block (module_task.h), written by the host just
+     * before each module_cmd() call. Handing them out via alloc() too
+     * would let a module's own allocation be overwritten by the next
+     * command's argv. */
+    g_pool_next  = (uint8_t *)m->heap_stack_lo + MDL_ARGBLOCK_SIZE;
     g_pool_end   = (uint8_t *)m->heap_stack_lo + MDL_HEAP_SIZE;
     g_free_list  = NULL;
 }
@@ -405,6 +542,45 @@ void host_free(void *p)
 
 /* ---- vtable ------------------------------------------------------------ */
 
+/*
+ * Decimal parse for module arguments [ABI v2]. Modules build -nostdlib,
+ * so without this every module taking a console argument reimplements
+ * it. Saturates instead of wrapping: a module asked to blink
+ * 99999999999 times should get INT_MAX, not a small negative number.
+ */
+static int host_atoi_impl(const char *s)
+{
+    if (!ptr_owned_by_module(s, 1)) {
+        return 0;
+    }
+    int sign = 1;
+    size_t i = 0;
+    if (ptr_owned_by_module(s, 1) && (s[0] == '-' || s[0] == '+')) {
+        sign = (s[0] == '-') ? -1 : 1;
+        i = 1;
+    }
+    long v = 0;
+    while (ptr_owned_by_module(s + i, 1) && s[i] >= '0' && s[i] <= '9') {
+        v = v * 10 + (s[i] - '0');
+        if (v > 2147483647L) {
+            v = 2147483647L;
+            break;
+        }
+        i++;
+    }
+    return (int)(sign * (int)v);
+}
+
+int host_atoi(const char *s) MDL_SYSCALL_GATE;
+int host_atoi(const char *s)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    feed_watchdog();
+    int ret = host_atoi_impl(s);
+    vPortResetPrivilege(was_priv);
+    return ret;
+}
+
 const host_api_t g_host_api = {
     .abi_ver   = HOST_API_ABI_VERSION,
     .log       = host_log,
@@ -414,6 +590,7 @@ const host_api_t g_host_api = {
     .alloc     = host_alloc,
     .free      = host_free,
     .uptime_ms = host_uptime_ms,
+    .atoi      = host_atoi,
 };
 
 void host_api_init(void)

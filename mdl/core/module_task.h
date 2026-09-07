@@ -38,6 +38,19 @@ struct host_api;
 #define MDL_STACK_SIZE (2 * 1024)
 
 /*
+ * Scratch carved off the bottom of the module's heap region, used only
+ * to hand a console command's argv to the module [ABI v2].
+ *
+ * It has to live in module-readable memory: the console's line buffer is
+ * host .bss, and an unprivileged module reading it takes a MemManage
+ * fault. Taking it from the heap region rather than adding a fifth arena
+ * region is deliberate -- all three configurable MPU regions are already
+ * spent (text/data/heap), so a fourth would not fit.
+ */
+#define MDL_ARGBLOCK_SIZE 128u
+#define MDL_CMD_MAX_ARGS  8
+
+/*
  * Starts *m (already loaded via mdl_load()) as an unprivileged,
  * MPU-restricted FreeRTOS task via xTaskCreateRestricted(): xRegions[]
  * gets exactly the module's text (RX), data (RW+XN), and heap (RW+XN)
@@ -56,5 +69,24 @@ struct host_api;
  * Returns pdPASS/pdFAIL (xTaskCreateRestricted()'s own return values).
  */
 int mdl_start_module_task(module_t *m, const struct host_api *host);
+
+/*
+ * Run the module's module_cmd(host, argc, argv) in the module's own
+ * unprivileged task [ABI v2].
+ *
+ * The console must never call module code directly: the console runs in
+ * the supervisor task, which is privileged, so a direct call would
+ * execute the module privileged and the sandbox would be worth nothing.
+ * This restarts the module task at cmd_entry instead, with the same MPU
+ * regions and a fresh stack, after copying argv into the module's own
+ * arg block.
+ *
+ * Returns 0 if the task could not be created (argv too large, no command
+ * exported, slot busy). On success the slot goes to MDL_SLOT_RUNNING and
+ * returns to MDL_SLOT_LOADED when the module returns; the caller polls
+ * for that -- see mdl_supervisor_run_module_command().
+ */
+int mdl_start_module_cmd_task(module_t *m, const struct host_api *host,
+                               int argc, const char *const *argv);
 
 #endif /* MDL_MODULE_TASK_H */

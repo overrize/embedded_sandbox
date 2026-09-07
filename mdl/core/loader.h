@@ -18,10 +18,20 @@ typedef enum {
     MDL_LOAD_ERR_TEXT_TOO_BIG,   /* text_size exceeds the arena's text region */
     MDL_LOAD_ERR_DATA_TOO_BIG,   /* got+data+bss exceeds the arena's data region */
     MDL_LOAD_ERR_BAD_RELOC,      /* a reloc entry's got_offset falls outside the GOT area */
+    MDL_LOAD_ERR_BAD_RES,        /* a resource claim is malformed or out of range */
+    MDL_LOAD_ERR_RES_CONFLICT,   /* a declared resource is already owned -- see mdl_load_detail() */
 } mdl_load_status_t;
 
 /* Human-readable string for a status, for logging -- never NULL. */
 const char *mdl_load_status_str(mdl_load_status_t status);
+
+/*
+ * Extra detail about the most recent mdl_load() failure, or "" when
+ * there is none. Exists for MDL_LOAD_ERR_RES_CONFLICT, where the useful
+ * message names the specific pin and its current owner -- something a
+ * status enum cannot carry. Valid until the next mdl_load() call.
+ */
+const char *mdl_load_detail(void);
 
 /*
  * Validates and copies `image` (packer.py's flat .mdl output, image_len

@@ -3,6 +3,13 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
+/* The wire format is genuinely shared: MDL_MODULE_RESOURCES() below emits
+ * mdl_res_t records that the packer copies verbatim into the .mdl and the
+ * loader reads back, so the module, the packer and the firmware must all
+ * agree on that struct. Modules therefore compile with mdl/core on the
+ * include path (tools/watch.py and tools/mock_host/run.py both set it). */
+#include "mdl_format.h"
 
 /*
  * host_api.h -- THE capability boundary for modules.
@@ -39,7 +46,10 @@
  * distinction is forward-looking).
  */
 
-#define HOST_API_ABI_VERSION 1
+/* v2 (2026-09-07): added atoi() to the vtable, and the two declaration
+ * macros below -- console commands and hardware claims. Append-only:
+ * every v1 entry keeps its slot and its meaning. */
+#define HOST_API_ABI_VERSION 2
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -55,6 +65,72 @@
  */
 #define MDL_MODULE_ABI_DECLARE() \
     __attribute__((used)) const uint32_t __mdl_abi_ver = HOST_API_ABI_VERSION
+
+/*
+ * Override the MDL's displayed name [ABI v2, optional].
+ *
+ * Only needed when the source directory is not what you want `status` to
+ * show -- the packer defaults to the directory name, which is right
+ * almost always.
+ */
+#define MDL_MODULE_NAME(n) \
+    __attribute__((used, section(".mdl_name"))) \
+    const char __mdl_name[MDL_NAME_MAX] = n
+
+/*
+ * Declare a console command this module answers to [ABI v2].
+ *
+ *     MDL_MODULE_COMMAND("blink");
+ *     int module_cmd(const host_api_t *host, int argc, const char *const *argv)
+ *     { ... }
+ *
+ * After the module loads, `blink` shows up in the console's own `help`
+ * and typing it runs module_cmd(); after `unload` it is gone again.
+ * argv[0] is the command name, so argv/argc read exactly like main().
+ *
+ * WHERE THIS RUNS, and why it is not just a callback: the console lives
+ * in the supervisor task, which is PRIVILEGED. Calling into module code
+ * from there would execute it privileged and the sandbox would be worth
+ * nothing. So the host instead restarts the module's own unprivileged
+ * task at module_cmd() and waits for it to finish. Consequences worth
+ * knowing:
+ *   - globals persist between invocations (they live in the module's
+ *     data region, which is not touched between calls);
+ *   - locals do not -- every invocation gets a fresh stack;
+ *   - argv strings are copied into the module's own memory first (the
+ *     console's line buffer is host memory the module cannot read);
+ *   - the module cannot start work of its own accord. Timers and
+ *     interrupt callbacks need the event-loop lifecycle, which is a
+ *     separate piece of work (maintain.md F1).
+ *
+ * Note the deliberate absence of `static`. Modules link with
+ * --gc-sections and nothing in the module references this array, so as
+ * a static it is dropped by the LINKER (`used` only binds the
+ * compiler) and the packer then sees a module that declares nothing --
+ * which it did, silently, the first time. External linkage puts it in
+ * the shared object's dynamic symbol table, which is a GC root; that is
+ * the same reason __mdl_abi_ver above survives. `retain` would be the
+ * tidier fix but this binutils ignores it ('retain attribute ignored').
+ */
+#define MDL_MODULE_COMMAND(name) \
+    __attribute__((used, section(".mdl_command"))) \
+    const char __mdl_command[MDL_CMD_NAME_MAX] = name
+
+/*
+ * Declare every piece of hardware this module touches [ABI v2].
+ *
+ *     MDL_MODULE_RESOURCES(MDL_RES_GPIO(1));
+ *
+ * A module that declares nothing gets nothing: gpio_set()/gpio_get()
+ * refuse every pin. Claiming something the host already owns fails the
+ * LOAD, with the owner named in the error, before any of the image is
+ * copied into the arena.
+ */
+#define MDL_RES_GPIO(pin) { MDL_RES_KIND_GPIO, (uint8_t)(pin), { 0, 0 } }
+
+#define MDL_MODULE_RESOURCES(...) \
+    __attribute__((used, section(".mdl_resources"))) \
+    const mdl_res_t __mdl_resources[] = { __VA_ARGS__ }
 
 typedef struct host_api {
     uint32_t abi_ver; /* Always HOST_API_ABI_VERSION for the struct
@@ -161,6 +237,20 @@ typedef struct host_api {
      *   - Callable from module_init() and from the module's task body.
      */
     uint32_t (*uptime_ms)(void);
+
+    /*
+     * atoi(s)  [ABI v2]
+     *   - Decimal string to int, optional leading '-', stops at the
+     *     first non-digit. No errno, no overflow report: out-of-range
+     *     input saturates rather than wrapping.
+     *   - s must lie in this module's own memory, same rule as log().
+     *     Returns 0 for a rejected or empty string, so a module cannot
+     *     tell a refused pointer from the string "0" -- callers that
+     *     care should validate the text themselves.
+     *   - Exists because modules build -nostdlib and every one of them
+     *     that takes a console argument would otherwise hand-roll this.
+     */
+    int (*atoi)(const char *s);
 } host_api_t;
 
 /*
@@ -198,6 +288,18 @@ void host_api_pool_reset(struct module *m);
  * still alive, purely because a human typed at the console. Same pin
  * indices and same -1-on-not-whitelisted return as gpio_set()/gpio_get().
  */
+/* Which host subsystem owns a whitelist pin, or NULL if a module may
+ * claim it -- what the console's `pins` command prints in its owner
+ * column, and the same table mdl_res_owner() answers load-time claims
+ * from. */
+const char *host_gpio_host_owner(int pin);
+
+/* True while a module has declared a pin the host would otherwise be
+ * using itself, so the host's own indicator task can stand down rather
+ * than fight it. A collision becomes a handover precisely because the
+ * module said so up front. */
+bool host_gpio_yielded_to_module(int pin);
+
 int host_gpio_direct_set(int pin, int level);
 int host_gpio_direct_get(int pin);
 

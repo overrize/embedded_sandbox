@@ -34,6 +34,40 @@ __attribute__((naked)) int arch_call_privileged(void *entry, void *got_base, con
 }
 
 /*
+ * arch_call_module3(entry, got_base, a0, a1, a2): call
+ * `((int(*)(const void*, int, const void*))entry)(a0, a1, a2)` with
+ * r9 = got_base, same contract as arch_call_privileged() above but for
+ * the three-argument module_cmd(host, argc, argv) entry point [ABI v2].
+ *
+ * a2 arrives on the stack, not in a register: AAPCS passes only the
+ * first four arguments in r0-r3, and this function has five. After the
+ * push below moves sp down by 12 bytes, that incoming word sits at
+ * [sp, #12] -- get the offset wrong and the module receives a garbage
+ * argv pointer, which the MPU then rejects in a place that looks
+ * nothing like the cause.
+ */
+__attribute__((naked)) int arch_call_module3(void *entry, void *got_base,
+                                              const void *a0, int a1, const void *a2)
+{
+    (void)entry;
+    (void)got_base;
+    (void)a0;
+    (void)a1;
+    (void)a2;
+    __asm volatile (
+        "push  {r4, r9, lr}   \n" /* sp -= 12, so the stacked 5th arg moves to [sp,#12] */
+        "ldr   r4, [sp, #12]  \n" /* r4 = a2 (argv) */
+        "mov   r12, r0        \n" /* r12 = entry; r0-r2 are about to be overwritten */
+        "mov   r9, r1         \n" /* r9 = got_base, for r9-relative global access */
+        "mov   r0, r2         \n" /* r0 = a0 (host) */
+        "mov   r1, r3         \n" /* r1 = a1 (argc) */
+        "mov   r2, r4         \n" /* r2 = a2 (argv) */
+        "blx   r12            \n"
+        "pop   {r4, r9, pc}   \n"
+    );
+}
+
+/*
  * Unprivileged entry into a module task. Not implemented yet -- lands in
  * M2 together with xTaskCreateRestricted() wiring and the SVC vtable.
  * Declared now so the arch_if.h contract is fully satisfied and M0/M1

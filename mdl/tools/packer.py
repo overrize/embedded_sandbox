@@ -47,12 +47,26 @@ PF_W = 2
 # never copied into the deployed payload, on either the text or data side.
 DYNLINK_SECTIONS = {".hash", ".dynsym", ".dynstr", ".rel.dyn", ".rela.dyn", ".dynamic"}
 
-MDL_HEADER_FMT = "<IHHIIIIIIIII"
+MDL_CMD_NAME_MAX = 16
+MDL_NAME_MAX = 16
+MDL_HEADER_FMT = "<IHH" + "I" * 12 + f"{MDL_CMD_NAME_MAX}s{MDL_NAME_MAX}s"
 MDL_HEADER_SIZE = struct.calcsize(MDL_HEADER_FMT)
 # magic,crc32,text_size,data_size,bss_size,got_off,got_count,init_off,
-# reloc_off,reloc_count = 10 u32 fields; abi_ver,arch = 2 u16 fields.
+# reloc_off,reloc_count = 10 u32; abi_ver,arch = 2 u16; then the ABI v2
+# additions cmd_off,res_off,res_count = 3 u32 and cmd_name[16].
 # Must equal sizeof(mdl_header_t) in mdl/core/mdl_format.h exactly.
-assert MDL_HEADER_SIZE == 4 * 10 + 2 * 2 == 44, MDL_HEADER_SIZE
+assert MDL_HEADER_SIZE == 4 * 13 + 2 * 2 + MDL_CMD_NAME_MAX + MDL_NAME_MAX == 88, MDL_HEADER_SIZE
+
+MDL_RES_FMT = "<BB2x"
+assert struct.calcsize(MDL_RES_FMT) == 4
+
+# Metadata sections emitted by MDL_MODULE_COMMAND()/MDL_MODULE_RESOURCES()
+# in host_api.h. Read out here into header fields; deliberately NOT removed
+# from the text blob, because they sit inside .rodata and cutting a hole
+# there would shift every offset around them for a few dozen bytes saved.
+SEC_COMMAND = ".mdl_command"
+SEC_RESOURCES = ".mdl_resources"
+SEC_NAME = ".mdl_name"
 
 MDL_RELOC_FMT = "<IB3x"
 MDL_RELOC_SIZE = struct.calcsize(MDL_RELOC_FMT)
@@ -180,6 +194,7 @@ def parse_host_abi_version(host_api_h: Path) -> int:
 
 
 def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
+         name_hint: str = "",
          text_region_size: int, data_region_size: int) -> None:
     data = so_path.read_bytes()
     elf = Elf32(data)
@@ -300,6 +315,46 @@ def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
         raise PackError("module_init's address falls outside the packed text blob "
                          "(unexpected linker layout)")
 
+    # ---- module_cmd (ABI v2, optional) ----
+    # Same Thumb-bit convention as init_off: the ELF symbol value for a
+    # Thumb function has bit 0 set, and the loader branches to it with blx,
+    # so the bit must survive into the header. 0 means "no command", which
+    # is why a module whose module_cmd sat at text offset 0 would be
+    # ambiguous -- it cannot, since module_init is also in text and one of
+    # them is not at 0.
+    cmd_sym = next((y for y in dynsyms if y["name"] == "module_cmd"), None)
+    cmd_off = 0
+    cmd_name = b""
+    if cmd_sym is not None:
+        cmd_off = cmd_sym["value"] - text_link_base
+        if not (0 < cmd_off < len(text_blob)):
+            raise PackError("module_cmd's address falls outside the packed text blob")
+        cmd_name = elf.section_bytes(SEC_COMMAND) if elf.by_name.get(SEC_COMMAND) else b""
+        if not cmd_name or cmd_name[0] == 0:
+            raise PackError("module_cmd() is defined but MDL_MODULE_COMMAND(\"name\") is "
+                            "missing -- the host would have no name to bind it to")
+        cmd_name = cmd_name[:MDL_CMD_NAME_MAX]
+    elif elf.by_name.get(SEC_COMMAND):
+        raise PackError('MDL_MODULE_COMMAND() is declared but module_cmd() is not defined')
+
+    # ---- the MDL's own name (ABI v2) ----
+    # Defaults to the source directory, because build/module.so tells a
+    # person nothing and requiring every author to declare a name would
+    # mean most MDLs shipped without one. MDL_MODULE_NAME() overrides.
+    if elf.by_name.get(SEC_NAME):
+        mdl_name = elf.section_bytes(SEC_NAME).split(b"\0")[0]
+    elif name_hint:
+        mdl_name = name_hint.encode()[:MDL_NAME_MAX - 1]
+    else:
+        mdl_name = b""
+
+    # ---- declared resources (ABI v2, optional) ----
+    res_bytes = elf.section_bytes(SEC_RESOURCES) if elf.by_name.get(SEC_RESOURCES) else b""
+    if len(res_bytes) % 4 != 0:
+        raise PackError(f"{SEC_RESOURCES} is {len(res_bytes)}B, not a multiple of "
+                        f"sizeof(mdl_res_t)=4 -- mismatched host_api.h?")
+    res_count = len(res_bytes) // 4
+
     # ---- assemble payload ----
     reloc_table = bytearray()
     for off, kind in reloc_entries:
@@ -312,6 +367,8 @@ def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
     payload += got_mut
     reloc_off = len(payload)
     payload += reloc_table
+    res_off = len(payload)
+    payload += res_bytes
 
     crc = zlib.crc32(bytes(payload)) & 0xFFFFFFFF
 
@@ -322,12 +379,17 @@ def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
         got_off, got_count,
         init_off,
         reloc_off, len(reloc_entries),
+        cmd_off, res_off, res_count,
+        cmd_name.ljust(MDL_CMD_NAME_MAX, b"\0")[:MDL_CMD_NAME_MAX],
+        mdl_name.ljust(MDL_NAME_MAX, b"\0")[:MDL_NAME_MAX],
     )
 
     out_path.write_bytes(header + bytes(payload))
     print(f"packed {so_path.name} -> {out_path} "
           f"(text={len(text_blob)}B data={len(data_bytes)}B bss={bss_size}B "
-          f"got={got_count} relocs={len(reloc_entries)})")
+          f"got={got_count} relocs={len(reloc_entries)}"
+          + (f" cmd={cmd_name.split(b"\0")[0].decode()}" if cmd_off else "")
+          + (f" res={res_count}" if res_count else "") + ")")
 
 
 def _read_symbol_u32(elf: Elf32, sym: dict) -> int:
@@ -378,12 +440,20 @@ def main(argv=None):
     ap.add_argument("--data-region-size", type=int, default=8 * 1024,
                      help="arena data region size in bytes -- got+data+bss must fit "
                           "(default: 8192, v1 arena)")
+    ap.add_argument("--name", default="",
+                     help="name the device shows in `status`; defaults to the source "
+                          "directory name")
     args = ap.parse_args(argv)
 
     try:
         abi_ver = parse_host_abi_version(args.host_api_h)
+        # build/module.so says nothing useful; the directory holding it
+        # is what the MDL is actually called (mdl/tests/modules/<name>/
+        # build/module.so -> <name>). --name overrides, and so does
+        # MDL_MODULE_NAME() inside the source.
+        hint = args.name or args.module_so.resolve().parent.parent.name
         pack(args.module_so, args.output_mdl,
-             abi_ver=abi_ver, arch=args.arch,
+             abi_ver=abi_ver, arch=args.arch, name_hint=hint,
              text_region_size=args.text_region_size,
              data_region_size=args.data_region_size)
     except PackError as e:

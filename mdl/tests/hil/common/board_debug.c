@@ -1,4 +1,5 @@
 #include "board_debug.h"
+#include "board_buildid.h"
 #include "at32f435_437.h"
 
 /*
@@ -83,6 +84,14 @@ void arch_fault_persist(const char *which, uint32_t *stacked, uint32_t cfsr, uin
     g_board_fault.magic = BOARD_FAULT_MAGIC;
     __DSB();
 }
+/* Strong override of console.c's weak default. Lives here rather than in
+ * board_buildid.c so that file stays a single string and nothing else. */
+const char *board_build_id(void);
+const char *board_build_id(void)
+{
+    return mdl_build_id;
+}
+
 /* ---- post-mortem readout ------------------------------------------- */
 
 static void fault_hex32(void (*out)(const char *), uint32_t v)

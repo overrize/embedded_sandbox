@@ -104,16 +104,36 @@ static void indicator_task(void *pvParameters)
             mdl_console_greet();
         }
 
-        bool up = usb_cdc_link_up();
-        if (up != was_up) {
-            host_gpio_direct_set(1, up ? 0 : 1); /* active-low: 0 = lit */
-            was_up = up;
+        /* Stand down on any pin a loaded module has DECLARED.
+         *
+         * Both indicators are a courtesy, not a requirement: the host
+         * stays a working host without them. So a module that asks for
+         * one gets it, and the host stops driving it rather than
+         * fighting -- which is the difference between a handover and the
+         * silent two-writer collision this arbitration exists to
+         * prevent. was_up is reset on release so the LED is repainted
+         * from the real link state rather than a stale edge. */
+        bool green_mine = !host_gpio_yielded_to_module(1);
+        bool blue_mine  = !host_gpio_yielded_to_module(0);
+
+        if (green_mine) {
+            bool up = usb_cdc_link_up();
+            if (up != was_up) {
+                host_gpio_direct_set(1, up ? 0 : 1); /* active-low: 0 = lit */
+                was_up = up;
+            }
+        } else {
+            was_up = false;
         }
 
-        host_gpio_direct_set(0, 0); /* LEDB on */
-        vTaskDelay(pdMS_TO_TICKS(100));
-        host_gpio_direct_set(0, 1); /* LEDB off */
-        vTaskDelay(pdMS_TO_TICKS(400));
+        if (blue_mine) {
+            host_gpio_direct_set(0, 0); /* LEDB on */
+            vTaskDelay(pdMS_TO_TICKS(100));
+            host_gpio_direct_set(0, 1); /* LEDB off */
+            vTaskDelay(pdMS_TO_TICKS(400));
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
     }
 }
 
