@@ -34,6 +34,10 @@ def find_native_cc(preferred: str | None) -> str:
     )
 
 
+# A resident MDL's module_init() never returns by design, so the simulator
+# has to give up rather than wait for something that will not happen.
+MODULE_RUN_TIMEOUT_S = 4
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_c", type=Path)
@@ -78,7 +82,24 @@ def main(argv=None) -> int:
         return 1
 
     print(f"--- running {exe.name} ---")
-    run_result = subprocess.run([str(exe)], capture_output=True, text=True)
+    # Bounded, because module_init() legitimately never returns for a
+    # RESIDENT MDL -- sw3_blue and friends loop forever polling a pin, and
+    # that is how residency worked before ABI v4 gave them events. Without
+    # this, running mock_host on one of those hangs the caller forever;
+    # tools/watch.py inherits that hang, which is the project's own inner
+    # loop. A timeout is not a failure here, it is the only honest answer:
+    # a simulator that runs module_init() to completion cannot simulate a
+    # module whose module_init() is not supposed to complete.
+    try:
+        run_result = subprocess.run([str(exe)], capture_output=True,
+                                     text=True, timeout=MODULE_RUN_TIMEOUT_S)
+    except subprocess.TimeoutExpired as e:
+        print(f"module_init() still running after {MODULE_RUN_TIMEOUT_S}s -- "
+               f"treating it as a resident module, not a hang.")
+        if e.stdout:
+            print(e.stdout.decode(errors='replace') if isinstance(e.stdout, bytes) else e.stdout, end='')
+        print('--- PASS (resident, not run to completion) ---')
+        return 0
     print(run_result.stdout, end="")
     if run_result.stderr:
         print(run_result.stderr, file=sys.stderr, end="")

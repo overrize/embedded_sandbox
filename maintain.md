@@ -337,9 +337,9 @@ mdl/
 
 | # | 任务 | 负责 | 状态 | 备注 |
 |:---:|---|---|---|---|
-| A1 | MCP server 骨架 + stdio 收发 | | 待认领 | 可先对 mock 设备开发 |
-| A2 | `compile_check` 工具（接 mock_host + packer） | | 待认领 | |
-| A3 | `deploy/remove/status/logs/describe` 工具 | | 待认领 | 依赖真机或仿真链路 |
+| A1 | MCP server 骨架 + stdio 收发 | claude/opus-5 | **已验证** | 手写 JSON-RPC，不引入 mcp SDK；真机端到端通过 |
+| A2 | `compile_check` 工具（接 mock_host + packer） | claude/opus-5 | **已验证** | 离线默认；`against_device` 可选在线核对 ABI/槽位 |
+| A3 | `deploy/remove/status/logs/describe` 工具 | claude/opus-5 | **已验证** | 真机 deploy/unload/logs 全通；构建失败不碰设备已验证 |
 | B1 | `MDL_MODULE_RESOURCES` 宏 + `__mdl_resources` 段 | claude/opus-5 | **已验证** | ABI v2；真机拒绝 PA9 认领，报错点名持有者 |
 | B2 | P2 packer manifest 提取 + 引脚级冲突比对 | claude/opus-5 | **已验证** | 兑现 D2；"强制修改"的正确位置是构建期而非加载期 |
 | R1 | **P0 卸载时恢复引脚到安全态** | claude/opus-5 | **已验证** | `reclaim_module()` 不碰 GPIO 配置，残留会传给下一个 MDL |
@@ -372,6 +372,48 @@ mdl/
 ## 9. 工作日志
 
 > 新条目加在最上面。格式：`### YYYY-MM-DD 名字/agent id` + 简短条目列表。
+
+### 2026-09-08 claude/opus-5（MCP A1–A3：P2 收尾）
+
+`mdl/tools/mcp_server/`，stdio + JSON-RPC 2.0，实现 §4 的六个 tool。真机端到端
+验证：整个会话 10 秒。
+
+```
+deploy self_clash → isError: USART2 和 BTN0 都是 PA3   （构建期拒绝）
+device_status     → RUNNING                            （设备没被碰过 ✓）
+deploy sw4_green  → OK, unloaded_previous=True
+read_logs         → [host] gpio released -> default: 2
+                    [mdl] sw4_green resident: ...
+remove_feature    → OK
+```
+
+**"构建失败不碰设备"这条契约是验证过的**，不是写在文档里的意图。
+
+**没有引入 `mcp` SDK**：MCP over stdio 就是换行分隔的 JSON-RPC，约百行；本项目
+只有 pyserial 一个运行时依赖（`packer.py` 零依赖）。为省这一百行引入一个 SDK，
+代价大于收益。
+
+**帧格式抽成 `mdl/tools/mdl_proto.py`**：它本来要出现第三份拷贝了
+（watch.py / console.py / MCP）。这和 `board_pins.def` 是同一个道理——三份手工
+维护的线格式不会保持一致，而漂移的表现是"设备无响应"，正是之前查过一整轮的症状。
+
+**`compile_check` 两档都做**（用户要求）：默认**离线**，只用源码 + `board_pins.def`，
+无需串口，CI 里能跑；`against_device: true` 时额外核对设备当前 ABI 与槽位占用。
+不合并成一个，否则会得到一个"没有设备就不能编译"的工具，那会毁掉 B2 的价值。
+
+**路上抓到两个真 bug**
+
+1. **`mock_host` 会永久挂住常驻 MDL**（早已存在，只是没人踩）。它原生执行
+   `module_init()`，而 `sw3_blue` 这类模块的 `module_init` **按设计永不返回**。
+   **`watch.py` 也调 mock_host，所以 `watch.py sw3_blue` 一样挂死**——项目自己的
+   开发内循环。修在源头（`mock_host/run.py` 加超时），超时报告为"常驻模块，无法
+   模拟"而非失败：**一个把 `module_init()` 跑到返回的模拟器，本来就模拟不了一个
+   不打算返回的 `module_init()`**。
+2. **每次设备请求都等满超时**。`_pump()` 收到帧仍不返回，6 秒超时 = 每次请求固定
+   6 秒，一次 deploy 三十几秒。超时该用来**界定失败**，不该**给成功定价**。
+
+**P2 至此全部完成**（B2 / P5 / A1–A3）。剩下 P3（F2 持久化、F3 原子热替换、
+H10 QEMU 复跑）以及主线 agent 开的 X1/X2（RV32 PIC POC、ESP32-C3）。
 
 ### 2026-09-08 claude/opus-5（.gitattributes + B2 + P5 首批数字）
 
