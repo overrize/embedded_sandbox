@@ -99,6 +99,9 @@ static void post_from_isr(uint8_t source, uint8_t id, uint32_t payload)
     s_q[s_tail].coalesced = 1u;
     s_q[s_tail].payload   = payload;
     s_q[s_tail].tick_ms   = now;
+    /* Stamped in the ISR, not when the task picks it up -- the whole
+     * point is to measure the gap between those two moments. */
+    s_q[s_tail].cycles    = host_cycles_now();
     s_tail = (uint8_t)((s_tail + 1u) % MDL_EVT_QUEUE_MAX);
     s_count++;
 
@@ -135,6 +138,7 @@ bool mdl_events_post_console(void)
         s_q[s_tail].coalesced = 1u;
         s_q[s_tail].payload   = 0;
         s_q[s_tail].tick_ms   = (uint32_t)xTaskGetTickCount();
+        s_q[s_tail].cycles    = host_cycles_now();
         s_tail = (uint8_t)((s_tail + 1u) % MDL_EVT_QUEUE_MAX);
         s_count++;
         ok = true;

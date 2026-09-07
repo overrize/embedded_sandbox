@@ -689,6 +689,42 @@ int host_atoi(const char *s)
     return ret;
 }
 
+/*
+ * Cycle counter [ABI v6].
+ *
+ * DWT CYCCNT is free running once enabled and costs one load to read, so
+ * it is the only clock fine enough to see what this project claims about
+ * itself: at 288MHz a tick is ~3.5ns, while the RTOS tick is 1ms and
+ * would round every interesting number to zero.
+ *
+ * TRCENA is set by software here rather than left to a debugger, so the
+ * numbers are the same whether or not one is attached -- a benchmark that
+ * only works under a debugger measures the debugger.
+ */
+static void cycles_init(void)
+{
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+uint32_t host_cycles_now(void)
+{
+    return DWT->CYCCNT;
+}
+
+/* Gated, like every other vtable entry -- which is exactly why timing a
+ * single host call with it is meaningless and a loop is required: the
+ * measurement pays the same SVC round trip as the thing measured. */
+uint32_t host_cycles(void) MDL_SYSCALL_GATE;
+uint32_t host_cycles(void)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    uint32_t c = DWT->CYCCNT;
+    vPortResetPrivilege(was_priv);
+    return c;
+}
+
 const host_api_t g_host_api = {
     .abi_ver   = HOST_API_ABI_VERSION,
     .log       = host_log,
@@ -700,6 +736,7 @@ const host_api_t g_host_api = {
     .uptime_ms = host_uptime_ms,
     .atoi      = host_atoi,
     .watchdog_feed = host_watchdog_feed,
+    .cycles    = host_cycles,
 };
 
 void host_api_init(void)
@@ -707,5 +744,6 @@ void host_api_init(void)
     /* No clock to arm: FreeRTOS owns the tick once vTaskStartScheduler()
      * runs (M1 had its own SysTick_Handler; M2 onward doesn't). The pins
      * the vtable exposes do still need configuring, though. */
+    cycles_init();
     gpio_whitelist_init();
 }

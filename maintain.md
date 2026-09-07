@@ -341,14 +341,14 @@ mdl/
 | A2 | `compile_check` 工具（接 mock_host + packer） | | 待认领 | |
 | A3 | `deploy/remove/status/logs/describe` 工具 | | 待认领 | 依赖真机或仿真链路 |
 | B1 | `MDL_MODULE_RESOURCES` 宏 + `__mdl_resources` 段 | claude/opus-5 | **已验证** | ABI v2；真机拒绝 PA9 认领，报错点名持有者 |
-| B2 | P2 packer manifest 提取 + 白名单比对 | | 待认领 | 兑现 D2；"强制修改"的正确位置是构建期而非加载期 |
+| B2 | P2 packer manifest 提取 + 引脚级冲突比对 | claude/opus-5 | **已验证** | 兑现 D2；"强制修改"的正确位置是构建期而非加载期 |
 | R1 | **P0 卸载时恢复引脚到安全态** | claude/opus-5 | **已验证** | `reclaim_module()` 不碰 GPIO 配置，残留会传给下一个 MDL |
 | R2 | **P0 关掉 DISDEFWBUF（写缓冲）** | claude/opus-5 | **已验证** | 一行；不改则所有性能数字虚低 |
 | R3 | P1 资源类型扩展 + 引脚级冲突展开 | claude/opus-5 | **机制已验证** | TIMER/I2C/UART/SPI/ADC；需板级功能↔引脚表 |
 | F1 | P1 中断 / 回调（两段式派发） | claude/opus-5 | **已验证** | ABI v3；先定事件队列溢出策略；依赖 H2 |
 | F2 | P3 flash 持久化 | | 待认领 | 现在掉电即失 |
 | F3 | P3 原子热替换 | | 待认领 | 现在 unload→load 有空窗 |
-| P5 | P2 基准测试（对标 LuaTOS） | | 待认领 | 依赖 R2，否则测的是虚低的数 |
+| P5 | P2 基准测试（对标 LuaTOS） | claude/opus-5 | **进行中** | ABI v6 `cycles()` + 事件周期戳；真机已出前两个数，见 §9 |
 | H1 | 真机 HIL 配置修正（ozone README 板级问题） | claude/opus-5 | **完成** | 料号/Flash 长度/HEXT 全改；五目标重编通过 |
 | H2 | **P1 看门狗误杀 → `watchdog_feed` 进 ABI** | claude/opus-5 | **已验证** | **F1 的前置**：常驻 MDL 阻塞等事件时会被隐式喂狗机制误杀 |
 | H3 | 技术债 #2：显式置 MEMFAULTENA | claude/opus-5 | **完成** | `mpu_armv7m.c` `arch_setup_regions()` |
@@ -372,6 +372,59 @@ mdl/
 ## 9. 工作日志
 
 > 新条目加在最上面。格式：`### YYYY-MM-DD 名字/agent id` + 简短条目列表。
+
+### 2026-09-08 claude/opus-5（.gitattributes + B2 + P5 首批数字）
+
+**`.gitattributes`** — 行尾由仓库决定，不再取决于各人的 `core.autocrlf`。
+加完执行 `git add --renormalize .`：**没有任何文件需要改动**，因为
+`autocrlf=true` 一直在提交时规范化为 LF。所以这不是修复不一致，而是把
+"碰巧一致"变成"按规则一致"，顺带让这个问题不再周期性地冒出来。
+
+**B2：冲突在构建期就拦**（P2 第一项，已验证）
+
+设备本来就会拒，现在打包器也拒。同一句话**几分钟前**就说了，而不是等镜像推到
+设备上——那时已经有人在等结果了。
+
+```
+self_clash    ✗ USART2 (PA2 TX, PA3 RX) and BTN0 (PA3, SW3) are both PA3
+uart1_clash   ✗ USART1 (PA9 TX, PA10 RX) needs PA9, held by the DAP debug UART
+```
+
+> **关键决定：一份表、两个读者。** `mdl/host/board_pins.def` 存板级引脚事实，
+> `host_resources.c` 用 X-macro `#include` 它，`packer.py` 用正则解析它。
+> 显而易见的替代方案（把表抄进 Python）失败得很难看：两份会漂移，然后
+> **构建通过、设备拒绝，两边都对自己那份笃信不疑**。解析器读到 0 行会直接
+> 报错——静默解析失败会把冲突检查变成一个"永远报成功"的空操作，比没有检查更糟。
+
+> 新增 `--allow-conflicts`：**构建期闸门一旦生效，就再也造不出故意冲突的镜像**，
+> 而设备端那道检查是防"不经我们打包器的镜像"的最后防线，会因此悄悄失去覆盖。
+> 三个负面 MDL 用它打包。这道闸门当场抓出第四个我没想到的：原来的 `conflict`
+> 认领 GPIO(4)——**PA9 的另一个名字**。
+
+**P5 首批数字（ABI v6）**
+
+新增 `host->cycles()`（DWT CYCCNT）和每个事件在 ISR 里盖的周期戳。用 DWT 而不是
+RTOS tick，因为 1ms 的 tick 会把这三个数**全部四舍五入成零**；`TRCENA` 由软件自
+己置，不依赖调试器——只在调试器下才跑得出的基准，测的是调试器。
+
+真机（288MHz，写缓冲已按 R2 关闭，1000 次迭代取平均）：
+
+| 测项 | 结果 |
+|---|---|
+| 空循环迭代 | 10.13 周期 |
+| 纯计算迭代 | 12.13 周期 |
+| **一次门控 host 调用** | **213.57 周期 → 扣掉循环开销约 203 周期 ≈ 0.7µs** |
+| 中断 → handler 派发 | 待按键采集 |
+
+> **203 周期是"不被信任"的税**：每次 vtable 调用都是一趟
+> `xPortRaisePrivilege`/`vPortResetPrivilege` 的 SVC 往返。对照解释器动辄数千
+> 周期的函数调用，这仍然快一个量级以上；但它**不是零**，把 host 调用写进热
+> 循环会付出代价。`host_api.h` 里已就此写明。
+>
+> 纯计算那两个数（10 vs 12 周期/迭代）证明的是另一件事：MDL 里的循环就是原生
+> ARM 指令，没有解释层。这个数难看的话，项目前提就不成立。
+
+**待办**：第三个数（ISR→handler）需要真机按键；MCP A1–A3 尚未开始。
 
 ### 2026-09-07 claude/opus-5（晚：R1/R2/H2/F1/R3 全部完成并真机验证）
 

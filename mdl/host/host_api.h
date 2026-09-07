@@ -46,7 +46,11 @@
  * distinction is forward-looking).
  */
 
-/* v5 (2026-09-07): peripheral claims (I2C/UART/TIMER) and pin-level
+/* v6 (2026-09-08): cycles(), and a cycle stamp on every event, so an MDL
+ * can measure the sandbox's own overhead from inside itself instead of
+ * the claim resting on assertion.
+ *
+ * v5 (2026-09-07): peripheral claims (I2C/UART/TIMER) and pin-level
  * conflict detection. Claiming only -- no peripheral operations in the
  * vtable yet.
  *
@@ -64,7 +68,7 @@
  * v2 (2026-09-07): added atoi() to the vtable, and the two declaration
  * macros below -- console commands and hardware claims. Append-only:
  * every v1 entry keeps its slot and its meaning. */
-#define HOST_API_ABI_VERSION 5
+#define HOST_API_ABI_VERSION 6
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -345,6 +349,20 @@ typedef struct host_api {
      *   - Callable from module_init(), module_cmd() and the task body.
      */
     void (*watchdog_feed)(void);
+
+    /*
+     * cycles()  [ABI v6]
+     *   - Free-running CPU cycle counter (DWT CYCCNT). At 288MHz one
+     *     count is ~3.5ns, and it wraps every ~15 seconds -- compute
+     *     durations by subtraction, which is wraparound-safe, never by
+     *     comparing two absolute values.
+     *   - Reading it costs a gated call like anything else, so timing a
+     *     single host call with it measures mostly itself. Time a loop of
+     *     several hundred and divide.
+     *   - Exists so 'almost no performance cost' can be a measurement
+     *     taken from inside the sandbox rather than a claim.
+     */
+    uint32_t (*cycles)(void);
 } host_api_t;
 
 /*
@@ -398,6 +416,10 @@ bool host_gpio_exti_info(int pin, uint8_t *port_source, uint8_t *pin_source,
                           uint32_t *line, int *irqn);
 
 /* The physical pin (MDL_PIN space) behind a whitelist index. */
+/* Ungated cycle read, for host code (the event ISR stamps events with
+ * it). The gated host_cycles() is the module-facing one. */
+uint32_t host_cycles_now(void);
+
 bool host_gpio_pin_id(int pin, uint8_t *out);
 
 const char *host_gpio_host_owner(int pin);

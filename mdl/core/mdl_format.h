@@ -225,6 +225,15 @@ typedef struct {
     uint16_t coalesced; /* how many merged into this one; 1 = none merged */
     uint32_t payload;
     uint32_t tick_ms;   /* when the FIRST of the merged events was captured */
+
+    /* DWT cycle count at the moment the ISR captured this event.
+     *
+     * Milliseconds are useless for the number that matters here: the gap
+     * between the interrupt firing and the MDL's handler running is a few
+     * microseconds, and tick_ms cannot see it. Subtracting this from
+     * host->cycles() at the top of module_event() measures the sandbox's
+     * actual dispatch cost, in cycles, from inside the MDL. */
+    uint32_t cycles;
 } mdl_event_t;
 
 /*
