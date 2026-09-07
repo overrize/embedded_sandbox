@@ -49,13 +49,14 @@ DYNLINK_SECTIONS = {".hash", ".dynsym", ".dynstr", ".rel.dyn", ".rela.dyn", ".dy
 
 MDL_CMD_NAME_MAX = 16
 MDL_NAME_MAX = 16
-MDL_HEADER_FMT = "<IHH" + "I" * 12 + f"{MDL_CMD_NAME_MAX}s{MDL_NAME_MAX}s"
+MDL_EVT_QUEUE_MAX = 16   # must equal mdl_format.h
+MDL_HEADER_FMT = ("<IHH" + "I" * 12 + f"{MDL_CMD_NAME_MAX}s{MDL_NAME_MAX}s" + "IHH")
 MDL_HEADER_SIZE = struct.calcsize(MDL_HEADER_FMT)
 # magic,crc32,text_size,data_size,bss_size,got_off,got_count,init_off,
 # reloc_off,reloc_count = 10 u32; abi_ver,arch = 2 u16; then the ABI v2
 # additions cmd_off,res_off,res_count = 3 u32 and cmd_name[16].
 # Must equal sizeof(mdl_header_t) in mdl/core/mdl_format.h exactly.
-assert MDL_HEADER_SIZE == 4 * 13 + 2 * 2 + MDL_CMD_NAME_MAX + MDL_NAME_MAX == 88, MDL_HEADER_SIZE
+assert MDL_HEADER_SIZE == 96, MDL_HEADER_SIZE   # + evt_off, evt_queue_depth, evt_rate_hz
 
 MDL_RES_FMT = "<BB2x"
 assert struct.calcsize(MDL_RES_FMT) == 4
@@ -67,6 +68,7 @@ assert struct.calcsize(MDL_RES_FMT) == 4
 SEC_COMMAND = ".mdl_command"
 SEC_RESOURCES = ".mdl_resources"
 SEC_NAME = ".mdl_name"
+SEC_EVENTS = ".mdl_events"
 
 MDL_RELOC_FMT = "<IB3x"
 MDL_RELOC_SIZE = struct.calcsize(MDL_RELOC_FMT)
@@ -355,6 +357,45 @@ def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
                         f"sizeof(mdl_res_t)=4 -- mismatched host_api.h?")
     res_count = len(res_bytes) // 4
 
+    # ---- events (ABI v4, optional) ----
+    evt_sym = next((y for y in dynsyms if y["name"] == "module_event"), None)
+    evt_off = 0
+    if evt_sym is not None:
+        evt_off = evt_sym["value"] - text_link_base
+        if not (0 < evt_off < len(text_blob)):
+            raise PackError("module_event's address falls outside the packed text blob")
+
+    depth = rate = 0
+    if elf.by_name.get(SEC_EVENTS):
+        ev = elf.section_bytes(SEC_EVENTS)
+        if len(ev) < 4:
+            raise PackError(f"{SEC_EVENTS} is {len(ev)}B, expected 4 -- mismatched host_api.h?")
+        depth, rate = struct.unpack("<HH", ev[:4])
+
+    # This is the half of 'will it overflow' that CAN be settled before an
+    # image ever reaches a device: a declared depth against a fixed host
+    # budget. The other half -- how fast events actually arrive -- is a
+    # fact about the world, not about this file, so it is recorded as a
+    # contract for the host to check at runtime rather than pretended to
+    # be provable here.
+    if depth > MDL_EVT_QUEUE_MAX:
+        raise PackError(f"MDL_MODULE_EVENTS asks for {depth} queue slots; the host "
+                        f"provides {MDL_EVT_QUEUE_MAX}. Lower the depth, or drain "
+                        f"events faster.")
+    if evt_sym is not None and depth == 0:
+        raise PackError("module_event() is defined but MDL_MODULE_EVENTS(depth, rate) "
+                        "is missing -- the host would have nowhere to queue events")
+    if evt_sym is None and depth != 0:
+        raise PackError("MDL_MODULE_EVENTS() is declared but module_event() is not "
+                        "defined -- events would be queued and never delivered")
+
+    # An edge-triggered claim with no handler is the same mistake seen
+    # from the resource side, and worth its own message.
+    for off in range(0, len(res_bytes), 4):
+        if res_bytes[off + 2] != 0 and evt_sym is None:
+            raise PackError(f"MDL_RES_GPIO_IRQ(pin {res_bytes[off + 1]}, ...) asks for "
+                            f"interrupts but the MDL defines no module_event()")
+
     # ---- assemble payload ----
     reloc_table = bytearray()
     for off, kind in reloc_entries:
@@ -382,6 +423,7 @@ def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
         cmd_off, res_off, res_count,
         cmd_name.ljust(MDL_CMD_NAME_MAX, b"\0")[:MDL_CMD_NAME_MAX],
         mdl_name.ljust(MDL_NAME_MAX, b"\0")[:MDL_NAME_MAX],
+        evt_off, depth, rate,
     )
 
     out_path.write_bytes(header + bytes(payload))
@@ -389,7 +431,8 @@ def pack(so_path: Path, out_path: Path, *, abi_ver: int, arch: int,
           f"(text={len(text_blob)}B data={len(data_bytes)}B bss={bss_size}B "
           f"got={got_count} relocs={len(reloc_entries)}"
           + (f" cmd={cmd_name.split(b"\0")[0].decode()}" if cmd_off else "")
-          + (f" res={res_count}" if res_count else "") + ")")
+          + (f" res={res_count}" if res_count else "")
+          + (f" evt(depth={depth},rate={rate})" if evt_off else "") + ")")
 
 
 def _read_symbol_u32(elf: Elf32, sym: dict) -> int:

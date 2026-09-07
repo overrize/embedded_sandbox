@@ -3,6 +3,7 @@
                         * deliberately does NOT pull this in, see its comment */
 #include "loader.h"
 #include "module_task.h"
+#include "host_events.h"
 #include "protocol.h"
 #include "console.h"
 #include "FreeRTOS.h"
@@ -52,8 +53,15 @@ static void reclaim_module(void)
      * someone to add a fourth reader that forgets. */
     /* Restore first, clear second: after the bitmap is zeroed there is
      * no record of which pins to hand back. */
+    /* Disarm BEFORE the task handle goes stale: a late edge arriving
+     * after the task is deleted would notify a task that is gone. */
+    mdl_events_disarm_all();
+
     uint32_t restored = host_gpio_release_claims(g_mdl_slot.gpio_claimed);
     g_mdl_slot.gpio_claimed = 0;
+    g_mdl_slot.res_count    = 0;
+    g_mdl_slot.evt_entry    = NULL;
+    g_mdl_slot.cmd_pending  = 0u;
     if (restored != 0u) {
         mdl_console_puts("[host] gpio released -> default:");
         for (unsigned i = 0; i < 32u; i++) {
@@ -124,6 +132,18 @@ static void handle_load(const uint8_t *payload, uint32_t len)
         g_mdl_slot.state = MDL_SLOT_EMPTY;
         return;
     }
+
+    /* Arm declared interrupts only now: the ISR notifies the module task,
+     * so the task has to exist first. */
+    mdl_events_reset(g_mdl_slot.evt_queue_depth, g_mdl_slot.evt_rate_hz,
+                      g_mdl_slot.task_handle);
+    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
+        if (g_mdl_slot.res[i].edge != (uint8_t)MDL_EDGE_NONE) {
+            (void)mdl_events_arm_gpio((int)g_mdl_slot.res[i].id,
+                                       g_mdl_slot.res[i].edge);
+        }
+    }
+
     mdl_proto_send_response(MDL_RESP_OK, NULL, 0);
 }
 
@@ -159,15 +179,16 @@ static void handle_status(void)
 
 mdl_cmd_result_t mdl_supervisor_run_module_command(int argc, char **argv, int *out_ret)
 {
-    if (g_mdl_slot.state != MDL_SLOT_LOADED || g_mdl_slot.cmd_entry == NULL) {
+    /* RUNNING, not LOADED: the task is resident now and the command is
+     * queued to it rather than restarting it. */
+    if (g_mdl_slot.state != MDL_SLOT_RUNNING || g_mdl_slot.cmd_entry == NULL) {
         return MDL_CMD_NO_MODULE;
     }
     if (argc < 1 || strcmp(argv[0], g_mdl_slot.cmd_name) != 0) {
         return MDL_CMD_NAME_MISMATCH;
     }
 
-    if (!mdl_start_module_cmd_task(&g_mdl_slot, &g_host_api, argc,
-                                    (const char *const *)argv)) {
+    if (!mdl_post_module_command(&g_mdl_slot, argc, (const char *const *)argv)) {
         return MDL_CMD_START_FAILED;
     }
 
@@ -178,7 +199,7 @@ mdl_cmd_result_t mdl_supervisor_run_module_command(int argc, char **argv, int *o
     for (uint32_t waited = 0; waited < MDL_CMD_TIMEOUT_MS; waited += MDL_CMD_POLL_MS) {
         vTaskDelay(pdMS_TO_TICKS(MDL_CMD_POLL_MS));
 
-        if (g_mdl_slot.state == MDL_SLOT_LOADED) {
+        if (g_mdl_slot.cmd_pending == 0u) {
             *out_ret = g_mdl_slot.cmd_ret;
             return MDL_CMD_OK;
         }
@@ -205,8 +226,9 @@ void mdl_supervisor_run(void)
             uint32_t now = (uint32_t)xTaskGetTickCount();
             /* Signed compare so tick wraparound stays correct: a parked
              * MDL is blocked inside the host and is not a candidate. */
-            bool parked = (g_mdl_slot.parked_until_tick != 0u) &&
-                           ((int32_t)(now - g_mdl_slot.parked_until_tick) < 0);
+            bool parked = (g_mdl_slot.parked_until_tick == MDL_PARKED_FOREVER) ||
+                           ((g_mdl_slot.parked_until_tick != 0u) &&
+                            ((int32_t)(now - g_mdl_slot.parked_until_tick) < 0));
             uint32_t idle_ms = (now - g_mdl_slot.last_active_tick); /* configTICK_RATE_HZ==1000 -> ticks==ms */
             if (!parked && idle_ms > MDL_WATCHDOG_TIMEOUT_MS) {
                 /* Presumed hung (the while(1){} case: no host call, ever,

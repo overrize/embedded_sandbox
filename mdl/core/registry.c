@@ -1,4 +1,5 @@
 #include "registry.h"
+#include "host_events.h"
 #include "arch_if.h"
 #include <stddef.h>
 
@@ -55,4 +56,57 @@ bool mdl_record_fault(uint32_t pc, uint32_t lr, uint32_t mmfar, uint32_t cfsr)
      * frame is ARM-specific stack-layout knowledge this function
      * shouldn't need, and it stays the caller's decision either way. */
     return is_module_fault;
+}
+
+/*
+ * Weak no-op event layer, so a target without one still links.
+ *
+ * mdl/host/host_events.c provides the real implementation and any build
+ * with a board does. But module_task.c and supervisor.c call these
+ * unconditionally now, and M0-M3 predate the event layer entirely -- the
+ * exact shape of build rot this project has been bitten by twice (see
+ * maintain.md's build discipline note). Same weak-default fix as
+ * mdl_supervisor_wake_from_isr() above and mdl_transport_write() in
+ * protocol.c: no #ifdefs, no fake source files per target.
+ *
+ * On such a target no event is ever posted, so take() returning false
+ * forever is exactly right -- the resident loop simply waits.
+ */
+__attribute__((weak)) bool mdl_events_take(mdl_event_t *out)
+{
+    (void)out;
+    return false;
+}
+
+__attribute__((weak)) bool mdl_events_post_console(void)
+{
+    return false;
+}
+
+__attribute__((weak)) bool mdl_events_arm_gpio(int pin, uint8_t edge)
+{
+    (void)pin;
+    (void)edge;
+    return false;
+}
+
+__attribute__((weak)) void mdl_events_get_stats(mdl_events_stats_t *out)
+{
+    out->delivered = 0;
+    out->lost = 0;
+    out->coalesced = 0;
+    out->declared_hz = 0;
+    out->peak_hz = 0;
+}
+
+__attribute__((weak)) void mdl_events_disarm_all(void)
+{
+}
+
+__attribute__((weak)) void mdl_events_reset(uint16_t depth, uint16_t rate_hz,
+                                             void *module_task_handle)
+{
+    (void)depth;
+    (void)rate_hz;
+    (void)module_task_handle;
 }

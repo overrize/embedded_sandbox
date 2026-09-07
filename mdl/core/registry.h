@@ -70,11 +70,17 @@ struct module {
      */
     uint32_t parked_until_tick;
 
+/* parked_until_tick == this means 'blocked with no deadline' -- the
+ * resident event loop waiting for something to happen. Distinguishing it
+ * from a far-future tick matters because tick comparison wraps. */
+#define MDL_PARKED_FOREVER 0xFFFFFFFFu
+
     /* ---- ABI v2: what the module declared about itself ---- */
 
     /* module_cmd(), or NULL when the module exports no console command.
      * Thumb bit already set, same as `entry`. */
     void *cmd_entry;
+    void *evt_entry; /* module_event(), NULL if the MDL takes no events */
     char  cmd_name[MDL_CMD_NAME_MAX];
 
     /* What `status` calls the thing currently loaded. */
@@ -86,10 +92,27 @@ struct module {
      * drives another is refused at the call, not merely at the load. */
     uint32_t gpio_claimed;
 
+    /* The claims as declared, kept verbatim because a bitmap loses the
+     * edge selection -- and, once MDL_RES_KIND_* grows past GPIO, the
+     * kind as well. The supervisor arms hardware from these after a
+     * successful load. */
+    mdl_res_t res[MDL_MAX_RES];
+    uint8_t   res_count;
+
+    /* Event budget this MDL declared (MDL_MODULE_EVENTS). */
+    uint16_t  evt_queue_depth;
+    uint16_t  evt_rate_hz;
+
     /* Return value of the most recent module_cmd() invocation. Written
      * by the module task through the syscall gate, read by the
      * supervisor once the slot goes back to MDL_SLOT_LOADED. */
     int cmd_ret;
+
+    /* 1 while a console command is queued or executing. The task used to
+     * be restarted per command, so slot state doubled as 'done'; the
+     * resident task stays RUNNING throughout, so completion needs its own
+     * flag. Set by the poster, cleared by the MDL's task. */
+    volatile uint8_t cmd_pending;
 };
 typedef struct module module_t;
 

@@ -98,6 +98,10 @@ static mdl_load_status_t check_resources(module_t *m, const mdl_res_t *res,
 {
     uint32_t claimed = 0;
 
+    if (count > MDL_MAX_RES) {
+        return MDL_LOAD_ERR_BAD_RES;
+    }
+
     for (uint32_t i = 0; i < count; i++) {
         if (res[i].kind != (uint8_t)MDL_RES_KIND_GPIO) {
             return MDL_LOAD_ERR_BAD_RES;
@@ -120,9 +124,16 @@ static mdl_load_status_t check_resources(module_t *m, const mdl_res_t *res,
             *w = '\0';
             return MDL_LOAD_ERR_RES_CONFLICT;
         }
+        if (res[i].edge > (uint8_t)MDL_EDGE_BOTH) {
+            return MDL_LOAD_ERR_BAD_RES;
+        }
         claimed |= (1u << res[i].id);
+        /* Kept verbatim: a bitmap loses the edge selection, and the
+         * supervisor needs it to arm the interrupt after the load. */
+        m->res[i] = res[i];
     }
 
+    m->res_count    = (uint8_t)count;
     m->gpio_claimed = claimed;
     return MDL_LOAD_OK;
 }
@@ -182,6 +193,13 @@ mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
     if ((size_t)hdr->res_off + (size_t)hdr->res_count * sizeof(mdl_res_t) > payload_len) {
         return MDL_LOAD_ERR_BAD_RES;
     }
+    /* The packer already refused an over-budget declaration; this is the
+     * defensive copy of that check, for an image that did not come
+     * through our packer. */
+    if (hdr->evt_queue_depth > MDL_EVT_QUEUE_MAX) {
+        return MDL_LOAD_ERR_BAD_RES;
+    }
+
     mdl_load_status_t res_st = check_resources(
         m, (const mdl_res_t *)(payload + hdr->res_off), hdr->res_count);
     if (res_st != MDL_LOAD_OK) {
@@ -230,6 +248,10 @@ mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
         m->cmd_entry = NULL;
         m->cmd_name[0] = '\0';
     }
+
+    m->evt_entry = (hdr->evt_off != 0u) ? (text_dst + hdr->evt_off) : NULL;
+    m->evt_queue_depth = hdr->evt_queue_depth;
+    m->evt_rate_hz     = hdr->evt_rate_hz;
 
     m->state = MDL_SLOT_LOADED;
     return MDL_LOAD_OK;

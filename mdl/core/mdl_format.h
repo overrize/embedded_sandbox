@@ -24,6 +24,16 @@
  * an MDL may export; most MDLs have a name and no command. */
 #define MDL_NAME_MAX 16u
 
+/* How many events the host can hold for one MDL, and the most an MDL may
+ * ask for with MDL_MODULE_EVENTS(). Shared because the packer checks a
+ * declaration against it before the image ever reaches a device -- that
+ * static half is the part of 'will it overflow' that can honestly be
+ * decided early. */
+#define MDL_EVT_QUEUE_MAX 16u
+
+/* Most resource claims one MDL may declare. */
+#define MDL_MAX_RES 8u
+
 typedef enum {
     MDL_ARCH_ARMV7M = 1,
     MDL_ARCH_RV32   = 2,
@@ -67,6 +77,25 @@ typedef struct {
      * `status` can say which one is loaded without every author having
      * to remember to declare anything. */
     char name[MDL_NAME_MAX];
+
+    /* ---- ABI v4: events ---- */
+
+    /* module_event() offset into text, Thumb bit set; 0 = this MDL takes
+     * no events and the host starts no resident task for it. */
+    uint32_t evt_off;
+
+    /* What the MDL says it needs. evt_queue_depth is checked against the
+     * host's budget AT PACK TIME -- a static number against a static
+     * limit, which is the part that can honestly be decided early.
+     *
+     * evt_rate_hz cannot be: how fast a button is pressed is a fact about
+     * the world, not about the image, so no amount of packing-time
+     * analysis can prove a queue will not overflow. It is recorded as a
+     * CONTRACT instead -- the host measures the real rate and, when it
+     * exceeds this, reports 'declared N/s, saw M/s' rather than a
+     * mysterious loss of events. */
+    uint16_t evt_queue_depth;
+    uint16_t evt_rate_hz;
 } mdl_header_t;
 
 /*
@@ -132,11 +161,56 @@ typedef enum {
     MDL_RES_KIND_GPIO = 1, /* id = index into the host GPIO whitelist */
 } mdl_res_kind_t;
 
+/* Edge selection for a GPIO claim that also wants interrupts [ABI v4].
+ * Lives in a byte that was already reserved, so the record keeps its
+ * size and older images stay readable. */
+typedef enum {
+    MDL_EDGE_NONE    = 0, /* plain GPIO, no interrupt */
+    MDL_EDGE_RISING  = 1,
+    MDL_EDGE_FALLING = 2,
+    MDL_EDGE_BOTH    = 3,
+} mdl_edge_t;
+
 typedef struct {
-    uint8_t kind; /* mdl_res_kind_t */
+    uint8_t kind;  /* mdl_res_kind_t */
     uint8_t id;
-    uint8_t _reserved[2];
+    uint8_t edge;  /* mdl_edge_t; GPIO only, MDL_EDGE_NONE elsewhere */
+    uint8_t _reserved;
 } mdl_res_t;
+
+/*
+ * One event delivered to an MDL's module_event() [ABI v4].
+ *
+ * WHY `coalesced` EXISTS. When events arrive faster than the MDL drains
+ * them, same-source events are merged rather than dropped. That is the
+ * right default for STATE-like sources -- a pin level, where only the
+ * latest value matters -- and quietly wrong for COUNT-like ones. Three
+ * quick presses merged into one is fine for a lamp and is silent data
+ * corruption for an encoder or a pulse counter.
+ *
+ * Carrying the merge count costs two bytes and removes the ambiguity
+ * entirely: a handler that only wants the current state ignores it, and
+ * one that is counting can recover the truth. Mitigation that hides how
+ * much it hid is not mitigation, it is a later bug.
+ *
+ * `lost` is different and worse: it counts events the host could not
+ * even merge (the queue was full of OTHER sources). That is real loss,
+ * it is reported through `status`, and it means the MDL is not keeping
+ * up with what it declared.
+ */
+typedef enum {
+    MDL_EVT_NONE    = 0,
+    MDL_EVT_GPIO    = 1, /* id = whitelist pin, payload = level at capture */
+    MDL_EVT_CONSOLE = 2, /* a console command; see module_cmd() */
+} mdl_evt_source_t;
+
+typedef struct {
+    uint8_t  source;    /* mdl_evt_source_t */
+    uint8_t  id;
+    uint16_t coalesced; /* how many merged into this one; 1 = none merged */
+    uint32_t payload;
+    uint32_t tick_ms;   /* when the FIRST of the merged events was captured */
+} mdl_event_t;
 
 /*
  * Permission flags for one MPU/PMP-backed region. MDL_PERM_NONE means no

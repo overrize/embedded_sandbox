@@ -21,6 +21,7 @@ INCLUDES := \
   -I$(VENDOR)/libraries/drivers/inc \
   -Iinc \
   -I$(MDL)/core \
+  -I$(MDL)/host \
   -I$(MDL)/arch/arm_cm4
 
 DEFINES := -DAT32F435VCT7

@@ -46,7 +46,13 @@
  * distinction is forward-looking).
  */
 
-/* v3 (2026-09-07): added watchdog_feed(), and CHANGED WHAT FEEDS THE
+/* v4 (2026-09-07): events. module_event() + MDL_MODULE_EVENTS() +
+ * MDL_RES_GPIO_IRQ(). The module task became resident and single: it
+ * drains one queue that carries both hardware events and console
+ * commands, because an MDL cannot simultaneously block waiting for an
+ * event and be restarted to run a command.
+ *
+ * v3 (2026-09-07): added watchdog_feed(), and CHANGED WHAT FEEDS THE
  * WATCHDOG -- an ordinary host call no longer counts as a sign of life.
  * See registry.h's last_active_tick. Append-only in layout; the
  * behavioural change is why the version moves.
@@ -54,7 +60,7 @@
  * v2 (2026-09-07): added atoi() to the vtable, and the two declaration
  * macros below -- console commands and hardware claims. Append-only:
  * every v1 entry keeps its slot and its meaning. */
-#define HOST_API_ABI_VERSION 3
+#define HOST_API_ABI_VERSION 4
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -131,11 +137,57 @@
  * LOAD, with the owner named in the error, before any of the image is
  * copied into the arena.
  */
-#define MDL_RES_GPIO(pin) { MDL_RES_KIND_GPIO, (uint8_t)(pin), { 0, 0 } }
+#define MDL_RES_GPIO(pin) { MDL_RES_KIND_GPIO, (uint8_t)(pin), MDL_EDGE_NONE, 0 }
+
+/* Same claim, but also arm the pin's interrupt [ABI v4]. Edge is one of
+ * MDL_EDGE_RISING / FALLING / BOTH. Requires module_event(); the packer
+ * refuses an MDL that asks for an edge and has nowhere to deliver it. */
+#define MDL_RES_GPIO_IRQ(pin, edge) { MDL_RES_KIND_GPIO, (uint8_t)(pin), (edge), 0 }
 
 #define MDL_MODULE_RESOURCES(...) \
     __attribute__((used, section(".mdl_resources"))) \
     const mdl_res_t __mdl_resources[] = { __VA_ARGS__ }
+
+/*
+ * Declare the event budget this MDL needs [ABI v4]. Required if, and
+ * only if, the MDL defines module_event().
+ *
+ *     MDL_MODULE_EVENTS(8, 200);   // 8 queue slots, expect <= 200/s
+ *
+ * DEPTH is checked at PACK TIME against the host's fixed per-slot event
+ * budget, and an MDL asking for more than exists is refused there -- a
+ * static number against a static limit, decided before anything is ever
+ * pushed to a device.
+ *
+ * RATE cannot be checked that way and it is worth being exact about why:
+ * how fast a button gets pressed is a fact about the world, not about
+ * the image, so nothing in the .mdl can prove a queue will not overflow.
+ * It is a CONTRACT. The host measures the arriving rate and, when it
+ * exceeds this number, says 'declared 200/s, saw 3000/s' -- naming the
+ * broken promise instead of reporting a mysterious loss of events. Pass
+ * 0 to opt out of the check and accept silent merging.
+ */
+#define MDL_MODULE_EVENTS(depth, rate_hz) \
+    __attribute__((used, section(".mdl_events"))) \
+    const uint16_t __mdl_events[2] = { (uint16_t)(depth), (uint16_t)(rate_hz) }
+
+/*
+ * int module_event(const host_api_t *host, const mdl_event_t *evt);
+ *
+ * Called once per event, in the MDL's own task, UNPRIVILEGED -- the same
+ * context module_init() ran in, never in interrupt context. The host's
+ * ISR is small, privileged, flashed firmware; it captures the event and
+ * wakes this task. That split is not a design preference: an ISR runs in
+ * handler mode, which is always privileged, so calling MDL code from one
+ * would execute it privileged and the sandbox would be worth nothing.
+ *
+ * The price is latency: an event reaches module_event() after a task
+ * wake and a context switch, not at interrupt speed. Anything needing a
+ * deadline tighter than that has to be host code -- no MDL can meet it,
+ * and no amount of ABI design changes that.
+ *
+ * Return value is ignored today.
+ */
 
 typedef struct host_api {
     uint32_t abi_ver; /* Always HOST_API_ABI_VERSION for the struct
@@ -317,6 +369,11 @@ void host_api_pool_reset(struct module *m);
  * bitmap -- see host_gpio_release_claims()'s own comment for why the
  * full configuration is re-applied and not merely the output level. */
 uint32_t host_gpio_release_claims(uint32_t claimed); /* -> pins actually restored */
+
+/* Which EXINT line/vector a whitelist pin is on; false if it cannot
+ * raise an interrupt. host_events.c uses this to arm a declared claim. */
+bool host_gpio_exti_info(int pin, uint8_t *port_source, uint8_t *pin_source,
+                          uint32_t *line, int *irqn);
 
 const char *host_gpio_host_owner(int pin);
 

@@ -82,6 +82,15 @@ typedef struct {
      * the console away, which is precisely the outcome the entry exists
      * to prevent. */
     bool       configure;
+
+    /* EXINT wiring, for pins an MDL may take interrupts on [ABI v4].
+     * exti_irqn < 0 means this pin cannot raise one -- outputs, and any
+     * input on lines 5..15, which share a single vector and would need a
+     * demultiplexing handler rather than a dedicated one. */
+    uint8_t    exti_port_source;
+    uint8_t    exti_pin_source;
+    uint32_t   exti_line;
+    int16_t    exti_irqn;
 } gpio_whitelist_entry_t;
 
 /*
@@ -107,11 +116,18 @@ typedef struct {
  * configured with the internal pull-up and read 1 when idle, 0 pressed.
  */
 static const gpio_whitelist_entry_t g_gpio_whitelist[] = {
-    { GPIOD, GPIO_PINS_10, CRM_GPIOD_PERIPH_CLOCK, true,  true  }, /* 0: LEDB  (PD10) */
-    { GPIOE, GPIO_PINS_15, CRM_GPIOE_PERIPH_CLOCK, true,  true  }, /* 1: LEDG  (PE15) */
-    { GPIOA, GPIO_PINS_3,  CRM_GPIOA_PERIPH_CLOCK, false, true  }, /* 2: BTN0  (PA3)  */
-    { GPIOE, GPIO_PINS_2,  CRM_GPIOE_PERIPH_CLOCK, false, true  }, /* 3: BTN1  (PE2)  */
-    { GPIOA, GPIO_PINS_9,  CRM_GPIOA_PERIPH_CLOCK, false, false }, /* 4: U1TX  (PA9)  */
+    { GPIOD, GPIO_PINS_10, CRM_GPIOD_PERIPH_CLOCK, true,  true,
+      0, 0, 0, -1 },  /* 0: LEDB = LED3 blue  (PD10) -- output, no exint */
+    { GPIOE, GPIO_PINS_15, CRM_GPIOE_PERIPH_CLOCK, true,  true,
+      0, 0, 0, -1 },  /* 1: LEDG = LED4 green (PE15) -- output, no exint */
+    { GPIOA, GPIO_PINS_3,  CRM_GPIOA_PERIPH_CLOCK, false, true,
+      SCFG_PORT_SOURCE_GPIOA, SCFG_PINS_SOURCE3, EXINT_LINE_3, EXINT3_IRQn },
+                      /* 2: BTN0 = SW3 (PA3) -- exint line 3, own vector */
+    { GPIOE, GPIO_PINS_2,  CRM_GPIOE_PERIPH_CLOCK, false, true,
+      SCFG_PORT_SOURCE_GPIOE, SCFG_PINS_SOURCE2, EXINT_LINE_2, EXINT2_IRQn },
+                      /* 3: BTN1 = SW4 (PE2) -- exint line 2, own vector */
+    { GPIOA, GPIO_PINS_9,  CRM_GPIOA_PERIPH_CLOCK, false, false,
+      0, 0, 0, -1 },  /* 4: U1TX (PA9) -- listed only so it can be refused */
 };
 
 static const char *const g_gpio_names[] = {
@@ -205,6 +221,25 @@ const char *mdl_res_owner(uint8_t kind, uint8_t id)
     /* Only a HARD claim refuses the load. A YIELDS pin is granted, and
      * the host stops driving it -- see host_gpio_yielded_to_module(). */
     return (g_gpio_owner[id].how == GPIO_HOST_HARD) ? g_gpio_owner[id].who : NULL;
+}
+
+static const gpio_whitelist_entry_t *gpio_lookup(int pin);
+
+/* Board knowledge for the event layer: which EXINT line and vector a
+ * whitelist pin sits on. host_events.c owns the queue, this owns the
+ * wiring, so neither has to know the other's business. */
+bool host_gpio_exti_info(int pin, uint8_t *port_source, uint8_t *pin_source,
+                          uint32_t *line, int *irqn)
+{
+    const gpio_whitelist_entry_t *e = gpio_lookup(pin);
+    if (e == NULL || !e->configure || e->exti_irqn < 0) {
+        return false;
+    }
+    *port_source = e->exti_port_source;
+    *pin_source  = e->exti_pin_source;
+    *line        = e->exti_line;
+    *irqn        = (int)e->exti_irqn;
+    return true;
 }
 
 const char *host_gpio_host_owner(int pin)

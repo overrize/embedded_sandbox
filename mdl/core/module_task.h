@@ -71,22 +71,18 @@ struct host_api;
 int mdl_start_module_task(module_t *m, const struct host_api *host);
 
 /*
- * Run the module's module_cmd(host, argc, argv) in the module's own
- * unprivileged task [ABI v2].
+ * Queue a console command for the MDL's resident task [ABI v4].
  *
- * The console must never call module code directly: the console runs in
- * the supervisor task, which is privileged, so a direct call would
- * execute the module privileged and the sandbox would be worth nothing.
- * This restarts the module task at cmd_entry instead, with the same MPU
- * regions and a fresh stack, after copying argv into the module's own
- * arg block.
+ * Not a call and not a task restart: the MDL has ONE task, which may
+ * already be blocked waiting for a hardware event, so a command is
+ * delivered through the same queue events use. argv is copied into the
+ * MDL's own arg block first -- the console's line buffer is host memory
+ * an unprivileged MDL cannot read.
  *
- * Returns 0 if the task could not be created (argv too large, no command
- * exported, slot busy). On success the slot goes to MDL_SLOT_RUNNING and
- * returns to MDL_SLOT_LOADED when the module returns; the caller polls
- * for that -- see mdl_supervisor_run_module_command().
+ * Returns 0 if there is nothing to deliver to, or the arguments do not
+ * fit. The reply comes back through the slot; see
+ * mdl_supervisor_run_module_command().
  */
-int mdl_start_module_cmd_task(module_t *m, const struct host_api *host,
-                               int argc, const char *const *argv);
+int mdl_post_module_command(module_t *m, int argc, const char *const *argv);
 
 #endif /* MDL_MODULE_TASK_H */

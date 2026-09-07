@@ -1,4 +1,5 @@
 #include "module_task.h"
+#include "host_events.h"
 #include "arch_if.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -77,8 +78,7 @@ static void module_task_finish_cmd(int ret)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
     g_mdl_slot.cmd_ret     = ret;
-    g_mdl_slot.state       = MDL_SLOT_LOADED;
-    g_mdl_slot.task_handle = NULL;
+    g_mdl_slot.cmd_pending = 0u; /* the task lives on -- only the command ended */
     vPortResetPrivilege(was_priv);
 }
 
@@ -94,37 +94,113 @@ static void module_task_mark_finished(void)
     vPortResetPrivilege(was_priv);
 }
 
+/* Everything the resident phase needs from the host side, read once. */
+typedef struct {
+    void *cmd_entry;
+    void *evt_entry;
+    void *got_base;
+} module_ctx_t;
+
+static void module_task_read_ctx(module_ctx_t *out) MDL_SYSCALL_GATE;
+static void module_task_read_ctx(module_ctx_t *out)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    out->cmd_entry = g_mdl_slot.cmd_entry;
+    out->evt_entry = g_mdl_slot.evt_entry;
+    out->got_base  = (void *)g_mdl_slot.data_lo;
+    vPortResetPrivilege(was_priv);
+}
+
+static bool module_task_take_event(mdl_event_t *out) MDL_SYSCALL_GATE;
+static bool module_task_take_event(mdl_event_t *out)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    bool got = mdl_events_take(out);
+    vPortResetPrivilege(was_priv);
+    return got;
+}
+
+/*
+ * Block until something arrives.
+ *
+ * Parked across the wait, or the watchdog would kill the MDL for the
+ * crime of having nothing to do -- which is the normal state of an
+ * event-driven module and the whole reason MDL_PARKED_FOREVER exists.
+ * Waking counts as progress, so the idle timer restarts from here.
+ */
+static void module_task_wait(void) MDL_SYSCALL_GATE;
+static void module_task_wait(void)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    g_mdl_slot.parked_until_tick = MDL_PARKED_FOREVER;
+    vPortResetPrivilege(was_priv);
+
+    /* MPU_ulTaskNotifyTake via mpu_wrappers -- a legal SVC from
+     * unprivileged code, unlike touching g_mdl_slot directly. */
+    ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+
+    was_priv = xPortRaisePrivilege();
+    g_mdl_slot.parked_until_tick = 0;
+    g_mdl_slot.last_active_tick  = (uint32_t)xTaskGetTickCount();
+    vPortResetPrivilege(was_priv);
+}
+
+/*
+ * The MDL's one task, for its whole life.
+ *
+ * module_init() runs first, exactly as before. What changed in ABI v4 is
+ * what happens after it returns: if the MDL exports module_event() or
+ * module_cmd(), this task stays and drains a single queue carrying both
+ * hardware events and console commands.
+ *
+ * One task and one queue is not tidiness, it is forced. The previous
+ * design ran a console command by RESTARTING the module task at
+ * module_cmd(), which cannot coexist with a task already blocked waiting
+ * for an event -- there is only one task to restart. Routing commands
+ * through the same queue removes the conflict instead of arbitrating it.
+ */
 static void module_task_trampoline(void *pvParameters)
 {
-    /* pvParameters is &g_host_api, which lives in flash -- readable by an
-     * unprivileged task through the port's own unprivileged-flash region,
-     * so this one really can be dereferenced directly. */
     const void *host = pvParameters;
 
     module_entry_t me;
     module_task_read_entry(&me);
-
-    /* arch_call_privileged()'s name is a holdover from M1, where the
-     * caller (the loader, running from main()) really was privileged.
-     * The mechanism itself -- load r9, blx, restore r9 -- doesn't touch
-     * CONTROL or care what privilege level it runs at, so it's exactly
-     * as correct called from this now-UNPRIVILEGED task. Not renamed to
-     * avoid churning M1's already-verified arch_if.h contract for a
-     * cosmetic reason. */
     (void)arch_call_privileged(me.entry, me.got_base, host);
 
-    /* module_init() returned -- v1's module lifecycle ends here (no
-     * "long-running task body" support yet; a module that wants to keep
-     * doing work after init would need module_init() to itself loop,
-     * which host_api.h's delay_ms() documents as fine to call from the
-     * task body). */
-    module_task_mark_finished();
+    module_ctx_t ctx;
+    module_task_read_ctx(&ctx);
 
-    /* vTaskDelete() resolves to MPU_vTaskDelete() here (mpu_wrappers.h
-     * remaps it for any file that isn't the kernel itself), so this is a
-     * legal SVC from unprivileged code -- unlike the direct g_mdl_slot
-     * writes above, it needs no gate of its own. */
-    vTaskDelete(NULL);
+    /* Nothing to stay resident for: v1 behaviour, unchanged. */
+    if (ctx.cmd_entry == NULL && ctx.evt_entry == NULL) {
+        module_task_mark_finished();
+        vTaskDelete(NULL);
+        return;
+    }
+
+    for (;;) {
+        mdl_event_t evt;
+        while (module_task_take_event(&evt)) {
+            if (evt.source == (uint8_t)MDL_EVT_CONSOLE) {
+                module_entry_t unused;
+                int argc = 0;
+                const char *const *argv = NULL;
+                module_task_read_cmd(&unused, &argc, &argv);
+                if (ctx.cmd_entry != NULL && argc > 0) {
+                    int ret = arch_call_module3(ctx.cmd_entry, ctx.got_base,
+                                                 host, argc, argv);
+                    module_task_finish_cmd(ret);
+                } else {
+                    module_task_finish_cmd(-1);
+                }
+            } else if (ctx.evt_entry != NULL) {
+                /* evt is on this task's own stack, i.e. module memory --
+                 * the MDL can read it. A pointer into the host's queue
+                 * could not be dereferenced here at all. */
+                (void)arch_call_module2(ctx.evt_entry, ctx.got_base, host, &evt);
+            }
+        }
+        module_task_wait();
+    }
 }
 
 /*
@@ -221,20 +297,23 @@ static void fill_task_def(TaskParameters_t *td, module_t *m,
                                        MDL_MPU_SRAM_TEX_S_C_B;
 }
 
-int mdl_start_module_cmd_task(module_t *m, const struct host_api *host,
-                               int argc, const char *const *argv)
+/*
+ * Copy argv into the MDL's own arg block and queue a console event.
+ *
+ * The strings the console parsed live in host .bss, which an
+ * unprivileged MDL cannot read at all -- handing those pointers over
+ * would fault inside the MDL, far from the mistake. Refuses rather than
+ * truncates: a silently shortened argument is worse than a rejected one.
+ */
+int mdl_post_module_command(module_t *m, int argc, const char *const *argv)
 {
-    if (m->cmd_entry == NULL || m->state != MDL_SLOT_LOADED) {
+    if (m->cmd_entry == NULL || m->state != MDL_SLOT_RUNNING) {
         return 0;
     }
     if (argc <= 0 || argc > MDL_CMD_MAX_ARGS) {
         return 0;
     }
 
-    /* Marshal argv into the module's own arg block. The strings the
-     * console parsed live in host .bss, which the module cannot read at
-     * all -- handing those pointers over would fault inside the module
-     * on first use, far from the actual mistake. */
     char **out_argv = (char **)m->heap_stack_lo;
     char *w   = (char *)m->heap_stack_lo + (size_t)MDL_CMD_MAX_ARGS * sizeof(char *);
     char *end = (char *)m->heap_stack_lo + MDL_ARGBLOCK_SIZE;
@@ -242,30 +321,19 @@ int mdl_start_module_cmd_task(module_t *m, const struct host_api *host,
     for (int i = 0; i < argc; i++) {
         const char *src = argv[i];
         out_argv[i] = w;
-        while (*src != '\0') {
+        while (*src != 0) {
             if (w >= end - 1) {
-                return 0; /* arguments do not fit -- refuse rather than truncate */
+                return 0;
             }
             *w++ = *src++;
         }
-        *w++ = '\0';
+        *w++ = 0;
     }
-
-    TaskParameters_t task_def = { 0 };
-    fill_task_def(&task_def, m, host, (void *)module_cmd_trampoline);
 
     s_cmd_argc = argc;
     s_cmd_argv = (const char *const *)out_argv;
-
-    TaskHandle_t created = NULL;
-    if (xTaskCreateRestricted(&task_def, &created) != pdPASS) {
-        return 0;
-    }
-
-    m->task_handle      = created;
-    m->last_active_tick = (uint32_t)xTaskGetTickCount();
-    m->state            = MDL_SLOT_RUNNING;
-    return 1;
+    m->cmd_pending = 1u;
+    return mdl_events_post_console() ? 1 : 0;
 }
 
 int mdl_start_module_task(module_t *m, const struct host_api *host)

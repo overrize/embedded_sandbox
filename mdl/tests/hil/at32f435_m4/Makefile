@@ -70,6 +70,7 @@ C_SRCS := \
   $(MDL)/arch/arm_cm4/reloc_arm.c \
   $(MDL)/arch/arm_cm4/ctxsw_arm.c \
   $(MDL)/host/host_api.c \
+  $(MDL)/host/host_events.c \
   $(MDL)/transport/protocol.c \
   $(MDL)/transport/console.c \
   $(MDL)/transport/usb_cdc.c \
@@ -82,6 +83,8 @@ C_SRCS := \
   $(VENDOR)/libraries/drivers/src/at32f435_437_flash.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_acc.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_misc.c \
+  $(VENDOR)/libraries/drivers/src/at32f435_437_exint.c \
+  $(VENDOR)/libraries/drivers/src/at32f435_437_scfg.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_usb.c \
   $(VENDOR)/libraries/cmsis/cm4/device_support/system_at32f435_437.c \
   $(FRSRC)/tasks.c \

@@ -1,4 +1,5 @@
 #include "console.h"
+#include "host_events.h"
 #include "protocol.h"
 #include "registry.h"
 #include "host_api.h"
@@ -333,6 +334,31 @@ static void cmd_status(void)
     }
     mdl_console_puts("\r\nentry  : ");
     put_hex32((uint32_t)(uintptr_t)g_mdl_slot.entry);
+
+
+    if (g_mdl_slot.state != MDL_SLOT_EMPTY && g_mdl_slot.evt_entry != NULL) {
+        mdl_events_stats_t ev;
+        mdl_events_get_stats(&ev);
+        mdl_console_puts("\r\nevents : ");
+        put_u32(ev.delivered);
+        mdl_console_puts(" delivered, ");
+        put_u32(ev.coalesced);
+        mdl_console_puts(" merged, ");
+        put_u32(ev.lost);
+        mdl_console_puts(" LOST");
+        /* Declared-vs-actual, so an overrun is reported as a broken
+         * promise rather than as events mysteriously going missing. */
+        if (ev.declared_hz != 0u) {
+            mdl_console_puts("\r\n         declared ");
+            put_u32((uint32_t)ev.declared_hz);
+            mdl_console_puts("/s, peak seen ");
+            put_u32(ev.peak_hz);
+            mdl_console_puts("/s");
+            if (ev.peak_hz > (uint32_t)ev.declared_hz) {
+                mdl_console_puts("  <- OVER DECLARED RATE");
+            }
+        }
+    }
 
     mdl_console_puts("\r\nfault  : ");
     if (!g_mdl_last_fault.occurred) {

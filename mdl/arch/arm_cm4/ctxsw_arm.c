@@ -34,6 +34,31 @@ __attribute__((naked)) int arch_call_privileged(void *entry, void *got_base, con
 }
 
 /*
+ * arch_call_module2(entry, got_base, a0, a1): call
+ * `((int(*)(const void*, const void*))entry)(a0, a1)` with r9 = got_base.
+ * For module_event(host, evt) [ABI v4]. Both arguments are in registers,
+ * so unlike arch_call_module3() there is no stacked-argument offset to
+ * get wrong.
+ */
+__attribute__((naked)) int arch_call_module2(void *entry, void *got_base,
+                                              const void *a0, const void *a1)
+{
+    (void)entry;
+    (void)got_base;
+    (void)a0;
+    (void)a1;
+    __asm volatile (
+        "push  {r4, r9, lr}   \n"
+        "mov   r4, r0         \n" /* r4 = entry */
+        "mov   r9, r1         \n" /* r9 = got_base */
+        "mov   r0, r2         \n" /* r0 = a0 (host) */
+        "mov   r1, r3         \n" /* r1 = a1 (event) */
+        "blx   r4             \n"
+        "pop   {r4, r9, pc}   \n"
+    );
+}
+
+/*
  * arch_call_module3(entry, got_base, a0, a1, a2): call
  * `((int(*)(const void*, int, const void*))entry)(a0, a1, a2)` with
  * r9 = got_base, same contract as arch_call_privileged() above but for

@@ -70,6 +70,10 @@ int arch_call_privileged(void *entry, void *got_base, const void *arg0);
  * whole point here is precise control over which argument lands in
  * which register, and over r9.
  */
+/* Two-argument variant, for module_event(host, evt) [ABI v4]. */
+int arch_call_module2(void *entry, void *got_base,
+                       const void *a0, const void *a1);
+
 int arch_call_module3(void *entry, void *got_base,
                        const void *a0, int a1, const void *a2);
 
