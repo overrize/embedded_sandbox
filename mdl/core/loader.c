@@ -50,42 +50,23 @@ const char *mdl_load_detail(void)
     return g_detail;
 }
 
-static char *detail_put(char *w, const char *end, const char *text)
-{
-    while (*text != '\0' && w < end - 1) {
-        *w++ = *text++;
-    }
-    return w;
-}
-
-static char *detail_put_u32(char *w, const char *end, uint32_t v)
-{
-    char tmp[11];
-    int n = 0;
-    do {
-        tmp[n++] = (char)('0' + (v % 10u));
-        v /= 10u;
-    } while (v != 0u && n < (int)sizeof(tmp));
-    while (n-- > 0 && w < end - 1) {
-        *w++ = tmp[n];
-    }
-    return w;
-}
-
 /*
- * Who already owns a piece of hardware, or NULL if it is free.
+ * The whole resource decision, answered by the host.
  *
- * Weak because core/ has no idea what hardware exists -- that is the
- * host layer's business (mdl/host/host_api.c supplies the real one). A
- * build without a host layer keeps this stub, and then nothing is owned
- * and every well-formed claim is granted, which is the right behaviour
- * for M0/M1-style bare targets that have no competing host tasks.
+ * Weak because core/ has no idea what hardware exists, let alone which
+ * physical pins a peripheral occupies -- and pins are the only space in
+ * which conflicts are decidable (mdl/host/host_resources.c explains why).
+ * A build with no host layer keeps this stub and grants everything, which
+ * is right for the bare M0/M1 targets that have no competing hardware.
  */
-__attribute__((weak)) const char *mdl_res_owner(uint8_t kind, uint8_t id)
+__attribute__((weak)) bool mdl_res_check(const mdl_res_t *res, uint32_t count,
+                                          char *detail, uint32_t detail_len)
 {
-    (void)kind;
-    (void)id;
-    return NULL;
+    (void)res;
+    (void)count;
+    (void)detail_len;
+    detail[0] = 0;
+    return true;
 }
 
 /*
@@ -103,34 +84,32 @@ static mdl_load_status_t check_resources(module_t *m, const mdl_res_t *res,
     }
 
     for (uint32_t i = 0; i < count; i++) {
-        if (res[i].kind != (uint8_t)MDL_RES_KIND_GPIO) {
+        if (res[i].kind == (uint8_t)MDL_RES_KIND_NONE ||
+            res[i].kind > (uint8_t)MDL_RES_KIND_TIMER) {
             return MDL_LOAD_ERR_BAD_RES;
         }
         /* 32 because gpio_claimed is a uint32_t bitmap; the host
          * whitelist is far shorter than that, and an id past its end is
          * caught by mdl_res_owner() returning a not-whitelisted owner. */
-        if (res[i].id >= 32u) {
+        /* 32 bounds the gpio_claimed bitmap; peripheral instance numbers
+         * are validated by the host knowing them or not. */
+        if (res[i].kind == (uint8_t)MDL_RES_KIND_GPIO && res[i].id >= 32u) {
             return MDL_LOAD_ERR_BAD_RES;
         }
 
-        const char *owner = mdl_res_owner(res[i].kind, res[i].id);
-        if (owner != NULL) {
-            char *w = g_detail;
-            const char *end = g_detail + sizeof(g_detail);
-            w = detail_put(w, end, "gpio ");
-            w = detail_put_u32(w, end, res[i].id);
-            w = detail_put(w, end, " is owned by ");
-            w = detail_put(w, end, owner);
-            *w = '\0';
-            return MDL_LOAD_ERR_RES_CONFLICT;
+        if (res[i].kind == (uint8_t)MDL_RES_KIND_GPIO) {
+            claimed |= (1u << res[i].id);
         }
-        if (res[i].edge > (uint8_t)MDL_EDGE_BOTH) {
-            return MDL_LOAD_ERR_BAD_RES;
-        }
-        claimed |= (1u << res[i].id);
         /* Kept verbatim: a bitmap loses the edge selection, and the
          * supervisor needs it to arm the interrupt after the load. */
         m->res[i] = res[i];
+    }
+
+    /* One call, after the per-claim sanity checks: the host expands every
+     * claim to physical pins and compares THOSE, which is the only way
+     * two differently-named claims on one pin get noticed. */
+    if (!mdl_res_check(res, count, g_detail, (uint32_t)sizeof(g_detail))) {
+        return MDL_LOAD_ERR_RES_CONFLICT;
     }
 
     m->res_count    = (uint8_t)count;

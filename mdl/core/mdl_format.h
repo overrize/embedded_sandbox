@@ -157,9 +157,24 @@ typedef struct {
  *                would be documentation rather than a constraint.
  */
 typedef enum {
-    MDL_RES_KIND_NONE = 0,
-    MDL_RES_KIND_GPIO = 1, /* id = index into the host GPIO whitelist */
+    MDL_RES_KIND_NONE  = 0,
+    MDL_RES_KIND_GPIO  = 1, /* id = index into the host GPIO whitelist */
+    MDL_RES_KIND_I2C   = 2, /* id = instance, e.g. 1 for I2C1  */
+    MDL_RES_KIND_UART  = 3, /* id = instance, e.g. 2 for USART2 */
+    MDL_RES_KIND_TIMER = 4, /* id = instance, e.g. 3 for TMR3   */
 } mdl_res_kind_t;
+
+/*
+ * A physical pin, as port<<4 | number (PA0 = 0x00, PB7 = 0x17, ...).
+ *
+ * Conflict detection has to happen in THIS space, not in the space of
+ * claim names. "I2C1" and "GPIO 2" look unrelated and can be the same
+ * copper: on this board USART2_RX and the SW3 button are both PA3.
+ * Comparing names would miss it; comparing pins cannot.
+ */
+#define MDL_PIN(port, num) ((uint8_t)(((port) << 4) | (num)))
+#define MDL_PIN_PORT(p)    ((uint8_t)((p) >> 4))
+#define MDL_PIN_NUM(p)     ((uint8_t)((p) & 0x0Fu))
 
 /* Edge selection for a GPIO claim that also wants interrupts [ABI v4].
  * Lives in a byte that was already reserved, so the record keeps its

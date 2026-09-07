@@ -241,27 +241,7 @@ static void module_task_trampoline(void *pvParameters)
 (((configTEX_S_C_B_SRAM & portMPU_RASR_TEX_S_C_B_MASK)) << portMPU_RASR_TEX_S_C_B_LOCATION)
 
 /*
- * Same shape as module_task_trampoline(), for a console-invoked
- * module_cmd() [ABI v2]. Unprivileged, like the module itself; every
- * host-side value it needs arrives through a syscall gate.
- */
-static void module_cmd_trampoline(void *pvParameters)
-{
-    const void *host = pvParameters;
-
-    module_entry_t me;
-    int argc = 0;
-    const char *const *argv = NULL;
-    module_task_read_cmd(&me, &argc, &argv);
-
-    int ret = arch_call_module3(me.entry, me.got_base, host, argc, argv);
-
-    module_task_finish_cmd(ret);
-    vTaskDelete(NULL);
-}
-
-/*
- * Region setup is identical for both entry points -- the module's MPU
+ * Region setup, shared by every way the module task gets started -- the
  * view of itself does not depend on which of its functions is running --
  * so it lives here rather than being written twice and drifting.
  * See the long note inside about why ulParameters must be raw RASR bits.

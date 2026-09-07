@@ -46,7 +46,11 @@
  * distinction is forward-looking).
  */
 
-/* v4 (2026-09-07): events. module_event() + MDL_MODULE_EVENTS() +
+/* v5 (2026-09-07): peripheral claims (I2C/UART/TIMER) and pin-level
+ * conflict detection. Claiming only -- no peripheral operations in the
+ * vtable yet.
+ *
+ * v4 (2026-09-07): events. module_event() + MDL_MODULE_EVENTS() +
  * MDL_RES_GPIO_IRQ(). The module task became resident and single: it
  * drains one queue that carries both hardware events and console
  * commands, because an MDL cannot simultaneously block waiting for an
@@ -60,7 +64,7 @@
  * v2 (2026-09-07): added atoi() to the vtable, and the two declaration
  * macros below -- console commands and hardware claims. Append-only:
  * every v1 entry keeps its slot and its meaning. */
-#define HOST_API_ABI_VERSION 4
+#define HOST_API_ABI_VERSION 5
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -143,6 +147,24 @@
  * MDL_EDGE_RISING / FALLING / BOTH. Requires module_event(); the packer
  * refuses an MDL that asks for an edge and has nowhere to deliver it. */
 #define MDL_RES_GPIO_IRQ(pin, edge) { MDL_RES_KIND_GPIO, (uint8_t)(pin), (edge), 0 }
+
+/*
+ * Peripheral claims [ABI v5]. The instance number is the one in the
+ * datasheet: MDL_RES_I2C(1) is I2C1.
+ *
+ * The host expands each of these to the physical pins it occupies and
+ * checks THOSE, because two claims with unrelated names can be the same
+ * copper -- MDL_RES_UART(2) and MDL_RES_GPIO(2) both want PA3 on this
+ * board, and no amount of comparing names would notice.
+ *
+ * NOTE: declaring a peripheral reserves it and is checked for conflicts,
+ * but the vtable does not yet expose I2C/UART/timer operations -- an MDL
+ * cannot drive them, only claim them. The arbitration mechanism landed
+ * first on purpose; the drivers are the next step.
+ */
+#define MDL_RES_I2C(n)   { MDL_RES_KIND_I2C,   (uint8_t)(n), 0, 0 }
+#define MDL_RES_UART(n)  { MDL_RES_KIND_UART,  (uint8_t)(n), 0, 0 }
+#define MDL_RES_TIMER(n) { MDL_RES_KIND_TIMER, (uint8_t)(n), 0, 0 }
 
 #define MDL_MODULE_RESOURCES(...) \
     __attribute__((used, section(".mdl_resources"))) \
@@ -374,6 +396,9 @@ uint32_t host_gpio_release_claims(uint32_t claimed); /* -> pins actually restore
  * raise an interrupt. host_events.c uses this to arm a declared claim. */
 bool host_gpio_exti_info(int pin, uint8_t *port_source, uint8_t *pin_source,
                           uint32_t *line, int *irqn);
+
+/* The physical pin (MDL_PIN space) behind a whitelist index. */
+bool host_gpio_pin_id(int pin, uint8_t *out);
 
 const char *host_gpio_host_owner(int pin);
 

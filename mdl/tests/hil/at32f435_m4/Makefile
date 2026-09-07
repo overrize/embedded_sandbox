@@ -71,6 +71,7 @@ C_SRCS := \
   $(MDL)/arch/arm_cm4/ctxsw_arm.c \
   $(MDL)/host/host_api.c \
   $(MDL)/host/host_events.c \
+  $(MDL)/host/host_resources.c \
   $(MDL)/transport/protocol.c \
   $(MDL)/transport/console.c \
   $(MDL)/transport/usb_cdc.c \

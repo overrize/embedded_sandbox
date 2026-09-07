@@ -91,6 +91,11 @@ typedef struct {
     uint8_t    exti_pin_source;
     uint32_t   exti_line;
     int16_t    exti_irqn;
+
+    /* The physical pin, in the port<<4|num space conflict detection uses.
+     * Without it a GPIO claim could not be compared against a peripheral
+     * claim at all -- they would be numbers from two different spaces. */
+    uint8_t    pin_id;
 } gpio_whitelist_entry_t;
 
 /*
@@ -117,17 +122,19 @@ typedef struct {
  */
 static const gpio_whitelist_entry_t g_gpio_whitelist[] = {
     { GPIOD, GPIO_PINS_10, CRM_GPIOD_PERIPH_CLOCK, true,  true,
-      0, 0, 0, -1 },  /* 0: LEDB = LED3 blue  (PD10) -- output, no exint */
+      0, 0, 0, -1, MDL_PIN(3, 10) },  /* 0: LEDB = LED3 blue  (PD10) */
     { GPIOE, GPIO_PINS_15, CRM_GPIOE_PERIPH_CLOCK, true,  true,
-      0, 0, 0, -1 },  /* 1: LEDG = LED4 green (PE15) -- output, no exint */
+      0, 0, 0, -1, MDL_PIN(4, 15) },  /* 1: LEDG = LED4 green (PE15) */
     { GPIOA, GPIO_PINS_3,  CRM_GPIOA_PERIPH_CLOCK, false, true,
-      SCFG_PORT_SOURCE_GPIOA, SCFG_PINS_SOURCE3, EXINT_LINE_3, EXINT3_IRQn },
+      SCFG_PORT_SOURCE_GPIOA, SCFG_PINS_SOURCE3, EXINT_LINE_3, EXINT3_IRQn,
+      MDL_PIN(0, 3) },
                       /* 2: BTN0 = SW3 (PA3) -- exint line 3, own vector */
     { GPIOE, GPIO_PINS_2,  CRM_GPIOE_PERIPH_CLOCK, false, true,
-      SCFG_PORT_SOURCE_GPIOE, SCFG_PINS_SOURCE2, EXINT_LINE_2, EXINT2_IRQn },
+      SCFG_PORT_SOURCE_GPIOE, SCFG_PINS_SOURCE2, EXINT_LINE_2, EXINT2_IRQn,
+      MDL_PIN(4, 2) },
                       /* 3: BTN1 = SW4 (PE2) -- exint line 2, own vector */
     { GPIOA, GPIO_PINS_9,  CRM_GPIOA_PERIPH_CLOCK, false, false,
-      0, 0, 0, -1 },  /* 4: U1TX (PA9) -- listed only so it can be refused */
+      0, 0, 0, -1, MDL_PIN(0, 9) },  /* 4: U1TX (PA9) -- listed to be refused */
 };
 
 static const char *const g_gpio_names[] = {
@@ -239,6 +246,18 @@ bool host_gpio_exti_info(int pin, uint8_t *port_source, uint8_t *pin_source,
     *pin_source  = e->exti_pin_source;
     *line        = e->exti_line;
     *irqn        = (int)e->exti_irqn;
+    return true;
+}
+
+/* The physical pin behind a whitelist index, for host_resources.c's
+ * pin-level comparison. False for an index that is not whitelisted. */
+bool host_gpio_pin_id(int pin, uint8_t *out)
+{
+    const gpio_whitelist_entry_t *e = gpio_lookup(pin);
+    if (e == NULL) {
+        return false;
+    }
+    *out = e->pin_id;
     return true;
 }
 
