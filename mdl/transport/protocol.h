@@ -43,6 +43,13 @@ typedef enum {
     MDL_CMD_LOAD   = 1, /* payload: a packer.py .mdl file, verbatim */
     MDL_CMD_UNLOAD = 2, /* no payload */
     MDL_CMD_STATUS = 3, /* no payload */
+
+    /* Load AND write to flash, so the MDL comes back after power loss.
+     * A separate command rather than a flag on LOAD because the two have
+     * genuinely different costs: an ordinary push is free and repeatable,
+     * this one erases a flash sector. The development loop should not pay
+     * that on every save of a source file. */
+    MDL_CMD_LOAD_PERSIST = 4,
 } mdl_proto_cmd_t;
 
 typedef enum {

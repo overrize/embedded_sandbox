@@ -20,6 +20,10 @@ MAGIC_U32 = int.from_bytes(MAGIC, "little")
 CMD_LOAD = 1
 CMD_UNLOAD = 2
 CMD_STATUS = 3
+# Load AND write to flash, so the MDL survives power loss. A separate
+# command rather than a flag because the costs differ: an ordinary push is
+# free and repeatable, this one erases a flash sector.
+CMD_LOAD_PERSIST = 4
 
 RESP_OK = 0x81
 RESP_ERROR = 0x82

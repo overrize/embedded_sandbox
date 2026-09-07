@@ -1,4 +1,5 @@
 #include "registry.h"
+#include "persist.h"
 #include "host_events.h"
 #include "arch_if.h"
 #include <stddef.h>
@@ -109,4 +110,27 @@ __attribute__((weak)) void mdl_events_reset(uint16_t depth, uint16_t rate_hz,
     (void)depth;
     (void)rate_hz;
     (void)module_task_handle;
+}
+
+/*
+ * Weak persistence hooks. mdl/tests/hil/common/board_persist.c provides
+ * the real ones; a target with no flash store keeps these and simply
+ * never has anything saved. Same pattern as the event-layer stubs above.
+ */
+__attribute__((weak)) const void *board_persist_image(uint32_t *out_len)
+{
+    (void)out_len;
+    return NULL;
+}
+
+__attribute__((weak)) bool board_persist_save(const void *image, uint32_t len)
+{
+    (void)image;
+    (void)len;
+    return false;
+}
+
+__attribute__((weak)) bool board_persist_forget(void)
+{
+    return false;
 }

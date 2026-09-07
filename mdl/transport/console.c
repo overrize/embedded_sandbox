@@ -1,5 +1,6 @@
 #include "console.h"
 #include "host_events.h"
+#include "persist.h"
 #include "protocol.h"
 #include "registry.h"
 #include "host_api.h"
@@ -227,6 +228,8 @@ static void cmd_help(void)
         "  mem <addr> [n]    dump n words (default 8) from addr\r\n"
         "  fault             fault record left by the previous run\r\n"
         "  ver               firmware build time + ABI version\r\n"
+        "  persist           what is saved in flash, if anything\r\n"
+        "  forget            erase the saved MDL\r\n"
         "  unload            unload the MDL, reclaim its resources\r\n");
 
     /* A loaded module's own command is listed right next to the
@@ -301,6 +304,28 @@ __attribute__((weak)) const char *board_build_id(void)
 __attribute__((weak)) int board_write_buffer_disabled(void)
 {
     return 0;
+}
+
+static void cmd_persist(void)
+{
+    uint32_t len = 0;
+    const void *img = board_persist_image(&len);
+    if (img == NULL) {
+        mdl_console_puts("stored : nothing -- this board comes up empty\r\n");
+        return;
+    }
+    mdl_console_puts("stored : ");
+    put_u32(len);
+    mdl_console_puts(" bytes at ");
+    put_hex32((uint32_t)(uintptr_t)img);
+    mdl_console_puts("  (reloaded every boot)\r\n");
+}
+
+static void cmd_forget(void)
+{
+    mdl_console_puts(board_persist_forget()
+                      ? "store erased -- this board will come up empty\r\n"
+                      : "erase failed\r\n");
 }
 
 static void cmd_ver(void)
@@ -538,6 +563,8 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "mem")    == 0) cmd_mem(argc, argv);
     else if (strcmp(argv[0], "fault")  == 0) cmd_fault();
     else if (strcmp(argv[0], "ver")    == 0) cmd_ver();
+    else if (strcmp(argv[0], "persist") == 0) cmd_persist();
+    else if (strcmp(argv[0], "forget")  == 0) cmd_forget();
     else if (strcmp(argv[0], "unload") == 0) {
         /* Reuses the binary protocol's own unload path rather than
          * duplicating reclaim logic: same code, same single-threaded

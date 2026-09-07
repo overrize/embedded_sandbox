@@ -30,6 +30,11 @@
  * right TaskHandle_t), before the task's main loop starts. */
 void mdl_supervisor_init(void);
 
+/* Reload the MDL saved in flash, if any [F2]. Call once at startup, after
+ * mdl_supervisor_init(). Uses the ordinary load path, so there is no
+ * second boot-only loader to get wrong. */
+void mdl_supervisor_restore(void);
+
 /*
  * ISR-context only, generic: wakes the supervisor task (a task
  * notification) and requests a context switch on exception/interrupt

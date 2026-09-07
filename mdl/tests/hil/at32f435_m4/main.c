@@ -50,6 +50,11 @@ static void supervisor_task(void *pvParameters)
     sandbox_bounds_init();
     host_api_init();
     mdl_supervisor_init();
+
+    /* Before the greeting, so a restored MDL's own startup log lands after
+     * the banner instead of interleaved with it. */
+    mdl_supervisor_restore();
+
     mdl_console_greet();
 
     /* "USB CDC 和 loader 任务在任何情况下都要活着" -- this task IS both

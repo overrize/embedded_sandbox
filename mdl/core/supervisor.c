@@ -4,6 +4,7 @@
 #include "loader.h"
 #include "module_task.h"
 #include "host_events.h"
+#include "persist.h"
 #include "protocol.h"
 #include "console.h"
 #include "FreeRTOS.h"
@@ -11,6 +12,60 @@
 #include <string.h>
 
 static TaskHandle_t s_supervisor_handle;
+
+/*
+ * Reload whatever was saved, at boot [F2].
+ *
+ * Goes through the ordinary load path, deliberately: what is stored is an
+ * IMAGE, so relocation, resource arbitration and task creation all behave
+ * exactly as for a fresh push. A separate boot-time loader would be a
+ * second code path that only runs at startup and only fails in the field.
+ *
+ * A saved image that no longer loads -- the ABI moved on, or a pin it
+ * claims is now held -- is reported and dropped, and the store is left
+ * intact so it can still be inspected. Silently erasing it would hide the
+ * reason the device came up empty.
+ */
+void mdl_supervisor_restore(void)
+{
+    uint32_t len = 0;
+    const void *image = board_persist_image(&len);
+    if (image == NULL) {
+        return;
+    }
+
+    mdl_load_status_t st = mdl_load(&g_mdl_slot, image, len,
+                                     HOST_API_ABI_VERSION, MDL_ARCH_ARMV7M);
+    if (st != MDL_LOAD_OK) {
+        mdl_console_puts("[host] saved MDL rejected at boot: ");
+        mdl_console_puts(mdl_load_status_str(st));
+        const char *detail = mdl_load_detail();
+        if (detail[0] != 0) {
+            mdl_console_puts(": ");
+            mdl_console_puts(detail);
+        }
+        mdl_console_puts("\r\n");
+        g_mdl_slot.state = MDL_SLOT_EMPTY;
+        return;
+    }
+
+    host_api_pool_reset(&g_mdl_slot);
+    if (!mdl_start_module_task(&g_mdl_slot, &g_host_api)) {
+        g_mdl_slot.state = MDL_SLOT_EMPTY;
+        return;
+    }
+    mdl_events_reset(g_mdl_slot.evt_queue_depth, g_mdl_slot.evt_rate_hz,
+                      g_mdl_slot.task_handle);
+    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
+        if (g_mdl_slot.res[i].edge != (uint8_t)MDL_EDGE_NONE) {
+            (void)mdl_events_arm_gpio((int)g_mdl_slot.res[i].id,
+                                       g_mdl_slot.res[i].edge);
+        }
+    }
+    mdl_console_puts("[host] restored saved MDL: ");
+    mdl_console_puts(g_mdl_slot.name);
+    mdl_console_puts("\r\n");
+}
 
 void mdl_supervisor_init(void)
 {
@@ -90,7 +145,7 @@ void mdl_supervisor_request_unload(void)
     reclaim_module();
 }
 
-static void handle_load(const uint8_t *payload, uint32_t len)
+static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
 {
     if (g_mdl_slot.state == MDL_SLOT_RUNNING || g_mdl_slot.state == MDL_SLOT_LOADED) {
         /* v1: one slot -- an explicit unload is required before loading
@@ -142,6 +197,15 @@ static void handle_load(const uint8_t *payload, uint32_t len)
             (void)mdl_events_arm_gpio((int)g_mdl_slot.res[i].id,
                                        g_mdl_slot.res[i].edge);
         }
+    }
+
+    /* Persist only once the MDL is actually running. Saving an image that
+     * then fails to start would hand the board something to reload into
+     * the same failure on every boot -- a brick that recreates itself. */
+    if (persist && !board_persist_save(payload, len)) {
+        mdl_proto_send_response(MDL_RESP_ERROR,
+                                 "running, but the flash save failed", 34);
+        return;
     }
 
     mdl_proto_send_response(MDL_RESP_OK, NULL, 0);
@@ -246,7 +310,8 @@ void mdl_supervisor_run(void)
         uint32_t len;
         if (mdl_proto_take_frame(&cmd, &payload, &len)) {
             switch (cmd) {
-            case MDL_CMD_LOAD:   handle_load(payload, len); break;
+            case MDL_CMD_LOAD:         handle_load(payload, len, false); break;
+            case MDL_CMD_LOAD_PERSIST: handle_load(payload, len, true);  break;
             case MDL_CMD_UNLOAD: handle_unload();            break;
             case MDL_CMD_STATUS: handle_status();             break;
             }

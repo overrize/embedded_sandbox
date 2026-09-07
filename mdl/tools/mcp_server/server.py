@@ -91,6 +91,15 @@ TOOLS = [
             "properties": {
                 "source": {"type": "string"},
                 "name": {"type": "string"},
+                "persist": {
+                    "type": "boolean",
+                    "description": (
+                        "Also write it to flash, so the device reloads it "
+                        "after power loss. Erases a flash sector, so leave it "
+                        "off while iterating and turn it on for the version "
+                        "meant to stay."
+                    ),
+                },
             },
             "required": ["source"],
         },
@@ -201,7 +210,9 @@ class Server:
             replaced = True
 
         image = r.mdl_path.read_bytes()
-        resp, payload = self.dev.request(proto.CMD_LOAD, image, timeout=10.0)
+        cmd = (proto.CMD_LOAD_PERSIST if args.get("persist")
+                else proto.CMD_LOAD)
+        resp, payload = self.dev.request(cmd, image, timeout=10.0)
         text = payload.decode("utf-8", "replace")
         ok = resp == proto.RESP_OK
         return {
@@ -209,6 +220,7 @@ class Server:
             "error": None if ok else text,
             "device_response": proto.resp_name(resp) + (f": {text}" if text else ""),
             "unloaded_previous": replaced,
+            "persisted": bool(args.get("persist")),
             "manifest": r.manifest,
             "logs": self.dev.logs(20),
         }

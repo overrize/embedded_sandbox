@@ -78,6 +78,7 @@ C_SRCS := \
   $(COMMON)/board_clock.c \
   $(COMMON)/board_debug.c \
   $(COMMON)/board_buildid.c \
+  $(COMMON)/board_persist.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_gpio.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_crm.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_pwc.c \

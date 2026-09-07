@@ -62,8 +62,14 @@ _Min_Stack_Size = 0x400;
 MEMORY
 {
 /* AT32F435VCT7 (LQFP100): 256K flash, 384K SRAM -- 与厂商 AT32F435xC_FLASH.ld 一致 */
-FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 256K
+/* 240K, not 256K. The last 16K is the MDL store (F2): an MDL saved there
+ * survives power loss and is reloaded at boot. Shrinking the region is
+ * what makes an overlap IMPOSSIBLE rather than merely unlikely -- the
+ * firmware currently ends around 131K, and 'there is plenty of room' is
+ * not a property the linker enforces. */
+FLASH (rx)      : ORIGIN = 0x08000000, LENGTH = 240K
 RAM (xrw)       : ORIGIN = 0x20000000, LENGTH = 384K
+MDLSTORE (r)    : ORIGIN = 0x0803C000, LENGTH = 16K
 }
 
 /*
@@ -276,6 +282,11 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM
+
+  /* Address and size of the MDL store, for board_persist.c. No section is
+   * placed here -- the region exists so nothing else can be. */
+  __mdl_store_start = ORIGIN(MDLSTORE);
+  __mdl_store_size  = LENGTH(MDLSTORE);
 
   INCLUDE mdl_arena.ld
 

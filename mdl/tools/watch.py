@@ -42,6 +42,7 @@ MDL_ROOT = HERE.parent
 
 PROTO_MAGIC = 0x434C444D  # 'MDLC'
 CMD_LOAD = 1
+CMD_LOAD_PERSIST = 4
 CMD_UNLOAD = 2
 CMD_STATUS = 3
 RESP_OK = 0x81
@@ -198,13 +199,14 @@ def pack_module(so_path: Path, python_exe: str) -> Path | None:
     return mdl_path
 
 
-def push_module(mdl_path: Path, port: str, baud: int, verify: bool = False) -> None:
+def push_module(mdl_path: Path, port: str, baud: int, verify: bool = False,
+                 persist: bool = False) -> None:
     if serial is None:
         print("✗ pyserial not installed -- run: pip install pyserial", file=sys.stderr)
         return
 
     data = mdl_path.read_bytes()
-    frame = build_frame(CMD_LOAD, data)
+    frame = build_frame(CMD_LOAD_PERSIST if persist else CMD_LOAD, data)
 
     try:
         with serial.Serial(port, baud, timeout=1) as ser:
@@ -238,7 +240,7 @@ def push_module(mdl_path: Path, port: str, baud: int, verify: bool = False) -> N
 
 
 def do_one_cycle(module_dir: Path, port: str, baud: int, gcc: str, python_exe: str,
-                 verify: bool = False) -> None:
+                 verify: bool = False, persist: bool = False) -> None:
     module_c = module_dir / "module.c"
     t0 = time.time()
 
@@ -260,7 +262,7 @@ def do_one_cycle(module_dir: Path, port: str, baud: int, gcc: str, python_exe: s
         return
 
     find_step(f"pushing to {port}")
-    push_module(mdl_path, port, baud, verify)
+    push_module(mdl_path, port, baud, verify, persist)
 
     print(f"\n(total: {time.time() - t0:.2f}s)")
 
@@ -274,6 +276,11 @@ def main(argv=None) -> int:
     ap.add_argument("--gcc", default="arm-none-eabi-gcc")
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--once", action="store_true", help="run one cycle and exit, instead of watching")
+    ap.add_argument("--persist", action="store_true",
+                    help="also write the MDL to flash so it survives power "
+                         "loss and is reloaded at boot. Erases a flash sector, "
+                         "so this is opt-in rather than the default for a "
+                         "development loop that pushes on every file save.")
     ap.add_argument("--verify", action="store_true",
                     help="after a successful load, run VERIFY_CMDS on the device console "
                          "in the same port session and print the replies (use this when "
@@ -289,7 +296,8 @@ def main(argv=None) -> int:
             print(f"no such file: {args.module_dir}", file=sys.stderr)
             return 1
         find_step(f"pushing {args.module_dir.name} to {args.port}")
-        push_module(args.module_dir, args.port, args.baud, args.verify)
+        push_module(args.module_dir, args.port, args.baud, args.verify,
+                     args.persist)
         return 0
 
     module_c = args.module_dir / "module.c"
@@ -299,7 +307,7 @@ def main(argv=None) -> int:
 
     if args.once:
         do_one_cycle(args.module_dir, args.port, args.baud, args.gcc, args.python,
-                     args.verify)
+                     args.verify, args.persist)
         return 0
 
     print(f"watching {module_c} -- Ctrl+C to stop")
@@ -310,7 +318,7 @@ def main(argv=None) -> int:
             if mtime != last_mtime:
                 last_mtime = mtime
                 do_one_cycle(args.module_dir, args.port, args.baud, args.gcc, args.python,
-                             args.verify)
+                             args.verify, args.persist)
             time.sleep(0.3)
     except KeyboardInterrupt:
         print("\nstopped.")

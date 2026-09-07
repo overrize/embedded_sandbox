@@ -51,7 +51,7 @@ QUIT = b"\x1d"  # Ctrl+]
 # Must match mdl/transport/protocol.h exactly -- the same wire format
 # tools/watch.py speaks.
 PROTO_MAGIC = b"MDLC"
-CMD_LOAD, CMD_UNLOAD, CMD_STATUS = 1, 2, 3
+CMD_LOAD, CMD_UNLOAD, CMD_STATUS, CMD_LOAD_PERSIST = 1, 2, 3, 4
 RESP_NAMES = {0x81: "OK", 0x82: "ERROR", 0x83: "STATUS"}
 
 BACKSPACE = (b"\x08", b"\x7f")
@@ -159,6 +159,8 @@ class LocalCommands:
         if cmd in ("/help", "/?"):
             out("local commands (handled here, never sent to the device):\r\n"
                 "  /load <path>   push an MDL over this same open port\r\n"
+                "  /save <path>   push it AND keep it across power loss\r\n"
+                "  /forget        erase the saved MDL\r\n"
                 "  /unload        unload whatever is loaded\r\n"
                 "  /status        ask for a STATUS frame\r\n"
                 "  /quit          disconnect (same as Ctrl+])\r\n"
@@ -166,6 +168,15 @@ class LocalCommands:
                 "try `help` there.\r\n")
         elif cmd == "/load":
             self.load(arg)
+        elif cmd == "/save":
+            self.load(arg, persist=True)
+        elif cmd == "/forget":
+            # No frame command for this: erasing the store is a console
+            # command on the device, so just type it there. Inventing a
+            # protocol command to do what one already exists for would be
+            # two ways to do one thing.
+            self.ser.write(b"forget\r")
+            self.ser.flush()
         elif cmd == "/unload":
             self.send(build_frame(CMD_UNLOAD))
         elif cmd == "/status":
@@ -178,7 +189,7 @@ class LocalCommands:
         self.ser.write(frame)
         self.ser.flush()
 
-    def load(self, arg):
+    def load(self, arg, persist=False):
         if not arg:
             out("usage: /load <path to .mdl>\r\n")
             return
@@ -191,7 +202,7 @@ class LocalCommands:
             return
         data = path.read_bytes()
         out("pushing %s (%dB) ...\r\n" % (path.name, len(data)))
-        self.send(build_frame(CMD_LOAD, data))
+        self.send(build_frame(CMD_LOAD_PERSIST if persist else CMD_LOAD, data))
         # The device's answer arrives as a frame and is rendered by the
         # reader thread, so there is nothing to wait for here.
 
