@@ -42,17 +42,33 @@ struct module {
      */
     void *task_handle;
 
-    /* Bumped by host_api.c on every successful SVC-gated call the
-     * module makes (mdl/host/host_api.c's mdl_watchdog_feed()) --
-     * "the module made a host call recently" doubles as "the module
-     * isn't stuck in a tight loop with no host interaction", which is
-     * exactly the while(1){} case the spec's software watchdog test
-     * needs to catch. A module doing long silent CPU-bound work with no
-     * host calls looks the same as hung by this metric -- a real v1
-     * limitation, not an oversight; the vtable the spec hands modules
-     * has no explicit "feed" call, so implicit-feed-via-any-host-call
-     * is the only signal available without inventing a new ABI entry. */
+    /*
+     * When the MDL last gave evidence of being alive [ABI v3 semantics].
+     *
+     * It used to be bumped by ANY host call, which sounds reasonable and
+     * is not: a module stuck in `while (1) { host->uptime_ms(); }` feeds
+     * it forever. 'Called an API' is evidence of executing, not of making
+     * progress. Only two things count now:
+     *
+     *   host->watchdog_feed()  -- said so explicitly
+     *   returning from delay_ms() -- was blocked in the host, which by
+     *                                definition is not hung
+     *
+     * The cost is that an MDL doing more than MDL_WATCHDOG_TIMEOUT_MS of
+     * uninterrupted work must say so. That is the contract, and it is the
+     * only version of this that detects anything.
+     */
     uint32_t last_active_tick;
+
+    /*
+     * Tick until which the MDL is legitimately blocked inside the host
+     * (delay_ms today; a blocking event wait once F1 lands), or 0.
+     *
+     * Without this the watchdog kills anything that sleeps longer than
+     * the timeout -- and sleeping is not hanging. This is the field that
+     * makes a resident, event-driven MDL possible at all.
+     */
+    uint32_t parked_until_tick;
 
     /* ---- ABI v2: what the module declared about itself ---- */
 

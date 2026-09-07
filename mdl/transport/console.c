@@ -297,6 +297,11 @@ __attribute__((weak)) const char *board_build_id(void)
     return "(no board layer)";
 }
 
+__attribute__((weak)) int board_write_buffer_disabled(void)
+{
+    return 0;
+}
+
 static void cmd_ver(void)
 {
     /* The point of this command: compare it against what build.ps1
@@ -308,6 +313,14 @@ static void cmd_ver(void)
     mdl_console_puts("\r\nabi    : v");
     put_u32((uint32_t)HOST_API_ABI_VERSION);
     mdl_console_puts("   (an MDL packed for a different ABI is refused)\r\n");
+
+    /* Reported because a benchmark taken on a bring-up build would be
+     * silently wrong -- slower, i.e. wrong in our own favour. */
+    mdl_console_puts("wbuf   : ");
+    mdl_console_puts(board_write_buffer_disabled()
+                      ? "DISABLED (bring-up; every store is slower -- do not benchmark)"
+                      : "enabled (normal speed)");
+    mdl_console_puts("\r\n");
 }
 
 static void cmd_status(void)

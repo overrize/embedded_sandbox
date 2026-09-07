@@ -39,6 +39,7 @@ static void reclaim_module(void)
     g_mdl_slot.state = MDL_SLOT_EMPTY;
     g_mdl_slot.entry = NULL;
     g_mdl_slot.last_active_tick = 0;
+    g_mdl_slot.parked_until_tick = 0;
 
     /* Everything the MDL declared about itself goes too.
      *
@@ -49,7 +50,24 @@ static void reclaim_module(void)
      * be harmless only because `help` and `pins` check the state first --
      * which is not a property to rely on, it is the next bug waiting for
      * someone to add a fourth reader that forgets. */
+    /* Restore first, clear second: after the bitmap is zeroed there is
+     * no record of which pins to hand back. */
+    uint32_t restored = host_gpio_release_claims(g_mdl_slot.gpio_claimed);
     g_mdl_slot.gpio_claimed = 0;
+    if (restored != 0u) {
+        mdl_console_puts("[host] gpio released -> default:");
+        for (unsigned i = 0; i < 32u; i++) {
+            if ((restored & (1u << i)) != 0u) {
+                mdl_console_puts(" ");
+                /* single digit is enough; the whitelist is short */
+                char d[2];
+                d[0] = (char)('0' + (int)i);
+                d[1] = 0;
+                mdl_console_puts(d);
+            }
+        }
+        mdl_console_puts("\r\n");
+    }
     g_mdl_slot.cmd_entry    = NULL;
     g_mdl_slot.cmd_name[0]  = '\0';
     g_mdl_slot.name[0]      = '\0';
@@ -185,8 +203,12 @@ void mdl_supervisor_run(void)
             reclaim_module();
         } else if (g_mdl_slot.state == MDL_SLOT_RUNNING) {
             uint32_t now = (uint32_t)xTaskGetTickCount();
+            /* Signed compare so tick wraparound stays correct: a parked
+             * MDL is blocked inside the host and is not a candidate. */
+            bool parked = (g_mdl_slot.parked_until_tick != 0u) &&
+                           ((int32_t)(now - g_mdl_slot.parked_until_tick) < 0);
             uint32_t idle_ms = (now - g_mdl_slot.last_active_tick); /* configTICK_RATE_HZ==1000 -> ticks==ms */
-            if (idle_ms > MDL_WATCHDOG_TIMEOUT_MS) {
+            if (!parked && idle_ms > MDL_WATCHDOG_TIMEOUT_MS) {
                 /* Presumed hung (the while(1){} case: no host call, ever,
                  * for the whole timeout window) -- same treatment as a
                  * real fault, just discovered by timeout instead of by

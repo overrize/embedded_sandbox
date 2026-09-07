@@ -39,7 +39,13 @@ INCLUDES := \
 
 DEFINES := -DAT32F435VCT7
 
+# Bus faults are imprecise by default now (see board_debug.h). Turn the
+# write buffer off for a session spent chasing one:  make PRECISE_FAULTS=1
+# The console's `ver` reports which way the running image was built.
+PRECISE_FAULTS ?= 0
+
 CFLAGS := $(CPU_FLAGS) $(DEFINES) $(INCLUDES) \
+  -DBOARD_DEBUG_PRECISE_BUS_FAULTS=$(PRECISE_FAULTS) \
   -std=c11 -O1 -g3 -Wall -Wextra \
   -ffunction-sections -fdata-sections \
   -MMD -MP

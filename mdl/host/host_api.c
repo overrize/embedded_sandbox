@@ -30,12 +30,14 @@ extern void vPortResetPrivilege(BaseType_t xRunningPrivileged);
 
 #define MDL_SYSCALL_GATE __attribute__((section("freertos_system_calls")))
 
-/* M3: every gate function feeds the software watchdog just by being
- * called -- see registry.h's last_active_tick comment for why "any host
- * call" is the feed signal the v1 vtable can support without adding a
- * new ABI entry. Must run privileged: g_mdl_slot lives in ordinary host
- * RAM, outside every region the calling module task was ever granted,
- * so an unprivileged write to it would itself fault. */
+/*
+ * Record that the MDL is alive [ABI v3 semantics -- see registry.h].
+ *
+ * Called from exactly two places now, not from every gate: the explicit
+ * watchdog_feed(), and the far side of delay_ms(). Feeding on any host
+ * call made the watchdog unable to detect the thing it exists for --
+ * `while (1) { host->uptime_ms(); }` fed it forever.
+ */
 static void feed_watchdog(void)
 {
     g_mdl_slot.last_active_tick = (uint32_t)xTaskGetTickCount();
@@ -235,35 +237,79 @@ static bool module_claimed(int pin)
  * changed nothing observable. Called from host_api_init(), privileged,
  * once at boot.
  */
-static void gpio_whitelist_init(void)
+/*
+ * Put one pin into its defined default state.
+ *
+ * Deliberately the ONLY definition of what 'default' means for a pin, so
+ * boot and release cannot drift apart. Release matters as much as boot:
+ * whatever an MDL left a pin doing outlives the MDL unless something
+ * actively undoes it, and the next MDL would inherit a pin in a state it
+ * never asked for and cannot see.
+ */
+static void gpio_set_default(const gpio_whitelist_entry_t *e)
 {
-    for (size_t i = 0; i < GPIO_WHITELIST_COUNT; i++) {
-        const gpio_whitelist_entry_t *e = &g_gpio_whitelist[i];
-        if (!e->configure) {
-            continue; /* listed to be refused, not to be driven */
-        }
-        gpio_init_type cfg;
+    if (!e->configure) {
+        return; /* listed to be refused, not to be driven */
+    }
 
-        crm_periph_clock_enable(e->clock, TRUE);
-        gpio_default_para_init(&cfg);
-        cfg.gpio_pins = e->mask;
-        if (e->is_output) {
-            cfg.gpio_mode           = GPIO_MODE_OUTPUT;
-            cfg.gpio_out_type       = GPIO_OUTPUT_PUSH_PULL;
-            cfg.gpio_pull           = GPIO_PULL_NONE;
-            cfg.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
-            gpio_init(e->port, &cfg);
-            /* Active-low LED: drive high = off, so a module that never
-             * touches the pin leaves it dark rather than lit. */
-            gpio_bits_write(e->port, e->mask, TRUE);
-        } else {
-            cfg.gpio_mode = GPIO_MODE_INPUT;
-            cfg.gpio_pull = GPIO_PULL_UP;
-            gpio_init(e->port, &cfg);
-        }
+    gpio_init_type cfg;
+    crm_periph_clock_enable(e->clock, TRUE);
+    gpio_default_para_init(&cfg);
+    cfg.gpio_pins = e->mask;
+
+    if (e->is_output) {
+        cfg.gpio_mode           = GPIO_MODE_OUTPUT;
+        cfg.gpio_out_type       = GPIO_OUTPUT_PUSH_PULL;
+        cfg.gpio_pull           = GPIO_PULL_NONE;
+        cfg.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
+        gpio_init(e->port, &cfg);
+        /* Active-low LED: drive high = off, so a pin nobody is using is
+         * dark rather than lit. */
+        gpio_bits_write(e->port, e->mask, TRUE);
+    } else {
+        cfg.gpio_mode = GPIO_MODE_INPUT;
+        cfg.gpio_pull = GPIO_PULL_UP;
+        gpio_init(e->port, &cfg);
     }
 }
 
+static void gpio_whitelist_init(void)
+{
+    for (size_t i = 0; i < GPIO_WHITELIST_COUNT; i++) {
+        gpio_set_default(&g_gpio_whitelist[i]);
+    }
+}
+
+/*
+ * Hand every pin this MDL declared back to the host, in a defined state.
+ *
+ * Called from reclaim_module() BEFORE gpio_claimed is cleared -- after,
+ * there would be no record of what to restore.
+ *
+ * Today an MDL can only change a pin's LEVEL (it reaches hardware solely
+ * through the vtable, and has no MPU region over any peripheral), so in
+ * practice this puts LEDs out. It re-applies the full configuration
+ * rather than just the level because that stops being enough the moment
+ * MDL_RES_KIND_* grows I2C/UART/ADC and a claim starts implying a pin
+ * mux -- and a half-released pin is the kind of residue that surfaces
+ * three MDLs later as inexplicable behaviour.
+ */
+uint32_t host_gpio_release_claims(uint32_t claimed)
+{
+    uint32_t restored = 0;
+    for (size_t i = 0; i < GPIO_WHITELIST_COUNT; i++) {
+        if ((claimed & (1u << (unsigned)i)) != 0u) {
+            gpio_set_default(&g_gpio_whitelist[i]);
+            restored |= (1u << (unsigned)i);
+        }
+    }
+    /* Returned so the caller can SAY which pins went back. On this board
+     * both LEDs are also host indicators, so the host relights them
+     * immediately and the restore is electrically invisible from outside
+     * -- indistinguishable from never having happened. Reporting it is
+     * the only way to tell the two apart. */
+    return restored;
+}
 static const gpio_whitelist_entry_t *gpio_lookup(int pin)
 {
     if (pin < 0 || (size_t)pin >= GPIO_WHITELIST_COUNT) {
@@ -341,7 +387,6 @@ void host_log(const char *msg) MDL_SYSCALL_GATE;
 void host_log(const char *msg)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    feed_watchdog();
     host_log_impl(msg);
     vPortResetPrivilege(was_priv);
 }
@@ -363,7 +408,6 @@ int host_gpio_set(int pin, int level) MDL_SYSCALL_GATE;
 int host_gpio_set(int pin, int level)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    feed_watchdog();
     /* Deliberately here and NOT in host_gpio_set_impl(): the claim is a
      * constraint on MODULES, not a property of the pin. Putting it in the
      * shared impl also gated host_gpio_direct_set(), so with no module
@@ -388,7 +432,6 @@ int host_gpio_get(int pin) MDL_SYSCALL_GATE;
 int host_gpio_get(int pin)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    feed_watchdog();
     /* Reading is a claim too -- it says this pin is yours to observe.
      * Same placement reasoning as host_gpio_set(). */
     int ret = module_claimed(pin) ? host_gpio_get_impl(pin) : -1;
@@ -426,7 +469,6 @@ uint32_t host_uptime_ms(void) MDL_SYSCALL_GATE;
 uint32_t host_uptime_ms(void)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    feed_watchdog();
     uint32_t ms = (uint32_t)xTaskGetTickCount();
     vPortResetPrivilege(was_priv);
     return ms;
@@ -435,13 +477,28 @@ uint32_t host_uptime_ms(void)
 void host_delay_ms(uint32_t ms) MDL_SYSCALL_GATE;
 void host_delay_ms(uint32_t ms)
 {
-    /* vTaskDelay() itself blocks (yields to the scheduler) -- no need to
-     * stay privileged for the wait itself, just for the call into it
-     * (xTaskGetTickCount()-adjacent bookkeeping FreeRTOS does inside). */
+    /* Park across the wait. An MDL blocked inside the host is not hung,
+     * and without this the watchdog would kill anything that sleeps for
+     * longer than its timeout -- which is most resident MDLs. */
+    BaseType_t was_priv = xPortRaisePrivilege();
+    g_mdl_slot.parked_until_tick = (uint32_t)xTaskGetTickCount() + ms + 1u;
+    vPortResetPrivilege(was_priv);
+
+    /* vTaskDelay() blocks; no reason to hold privilege across it. */
+    vTaskDelay(pdMS_TO_TICKS(ms));
+
+    was_priv = xPortRaisePrivilege();
+    g_mdl_slot.parked_until_tick = 0;
+    feed_watchdog(); /* came back from the wait -- that IS progress */
+    vPortResetPrivilege(was_priv);
+}
+
+void host_watchdog_feed(void) MDL_SYSCALL_GATE;
+void host_watchdog_feed(void)
+{
     BaseType_t was_priv = xPortRaisePrivilege();
     feed_watchdog();
     vPortResetPrivilege(was_priv);
-    vTaskDelay(pdMS_TO_TICKS(ms));
 }
 
 /* ---- per-module alloc() pool -------------------------------------------
@@ -501,7 +558,6 @@ void *host_alloc(size_t n) MDL_SYSCALL_GATE;
 void *host_alloc(size_t n)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    feed_watchdog();
     void *ret = host_alloc_impl(n);
     vPortResetPrivilege(was_priv);
     return ret;
@@ -535,7 +591,6 @@ void host_free(void *p) MDL_SYSCALL_GATE;
 void host_free(void *p)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    feed_watchdog();
     host_free_impl(p);
     vPortResetPrivilege(was_priv);
 }
@@ -575,7 +630,6 @@ int host_atoi(const char *s) MDL_SYSCALL_GATE;
 int host_atoi(const char *s)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    feed_watchdog();
     int ret = host_atoi_impl(s);
     vPortResetPrivilege(was_priv);
     return ret;
@@ -591,6 +645,7 @@ const host_api_t g_host_api = {
     .free      = host_free,
     .uptime_ms = host_uptime_ms,
     .atoi      = host_atoi,
+    .watchdog_feed = host_watchdog_feed,
 };
 
 void host_api_init(void)

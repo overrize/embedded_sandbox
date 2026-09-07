@@ -34,12 +34,23 @@
  */
 
 /*
- * Set to 0 once hardware bring-up is done, or before taking any
- * performance measurement. Leaving it at 1 does not change behaviour,
- * only speed -- and it is worth far more than the speed during bring-up.
+ * Disable the write buffer (ACTLR.DISDEFWBUF) so bus faults are precise.
+ *
+ * DEFAULT 0 SINCE 2026-09-07. It was 1 through bring-up and earned its
+ * keep -- both the .privileged_data fault and the MPU-attribute one were
+ * found with it. But it makes EVERY store in the system slower, and this
+ * project's central claim is that a loaded MDL costs almost nothing
+ * against an interpreter. Leaving a bring-up switch on would make every
+ * number measured here wrong in our own favour, which is the worst
+ * direction for a benchmark to be wrong in.
+ *
+ * Turn it back on for a session chasing a bus fault:
+ *   make PRECISE_FAULTS=1        (or -DBOARD_DEBUG_PRECISE_BUS_FAULTS=1)
+ * The console's `ver` reports which way this build was compiled, so a
+ * measurement cannot be taken on a slowed image by accident.
  */
 #ifndef BOARD_DEBUG_PRECISE_BUS_FAULTS
-#define BOARD_DEBUG_PRECISE_BUS_FAULTS 1
+#define BOARD_DEBUG_PRECISE_BUS_FAULTS 0
 #endif
 
 /*

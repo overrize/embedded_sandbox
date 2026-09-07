@@ -46,10 +46,15 @@
  * distinction is forward-looking).
  */
 
-/* v2 (2026-09-07): added atoi() to the vtable, and the two declaration
+/* v3 (2026-09-07): added watchdog_feed(), and CHANGED WHAT FEEDS THE
+ * WATCHDOG -- an ordinary host call no longer counts as a sign of life.
+ * See registry.h's last_active_tick. Append-only in layout; the
+ * behavioural change is why the version moves.
+ *
+ * v2 (2026-09-07): added atoi() to the vtable, and the two declaration
  * macros below -- console commands and hardware claims. Append-only:
  * every v1 entry keeps its slot and its meaning. */
-#define HOST_API_ABI_VERSION 2
+#define HOST_API_ABI_VERSION 3
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -251,6 +256,21 @@ typedef struct host_api {
      *     that takes a console argument would otherwise hand-roll this.
      */
     int (*atoi)(const char *s);
+
+    /*
+     * watchdog_feed()  [ABI v3]
+     *   - Tells the host this MDL is still making progress. The host
+     *     kills an MDL that has neither fed nor been blocked in a host
+     *     call for MDL_WATCHDOG_TIMEOUT_MS.
+     *   - You need it only for a stretch of work longer than that
+     *     timeout with no delay_ms() in it. A loop that sleeps each
+     *     iteration is already covered: returning from delay_ms() counts.
+     *   - Calling it does NOT make an MDL immortal -- it is a statement
+     *     that you are progressing, and a module that lies about that
+     *     is a module that can hang the slot until someone unloads it.
+     *   - Callable from module_init(), module_cmd() and the task body.
+     */
+    void (*watchdog_feed)(void);
 } host_api_t;
 
 /*
@@ -292,6 +312,12 @@ void host_api_pool_reset(struct module *m);
  * claim it -- what the console's `pins` command prints in its owner
  * column, and the same table mdl_res_owner() answers load-time claims
  * from. */
+/* Return every pin in `claimed` (a gpio_claimed bitmap) to its default
+ * state. The supervisor calls this on unload, before clearing the
+ * bitmap -- see host_gpio_release_claims()'s own comment for why the
+ * full configuration is re-applied and not merely the output level. */
+uint32_t host_gpio_release_claims(uint32_t claimed); /* -> pins actually restored */
+
 const char *host_gpio_host_owner(int pin);
 
 /* True while a module has declared a pin the host would otherwise be

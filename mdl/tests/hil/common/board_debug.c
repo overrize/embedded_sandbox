@@ -92,6 +92,12 @@ const char *board_build_id(void)
     return mdl_build_id;
 }
 
+int board_write_buffer_disabled(void);
+int board_write_buffer_disabled(void)
+{
+    return BOARD_DEBUG_PRECISE_BUS_FAULTS ? 1 : 0;
+}
+
 /* ---- post-mortem readout ------------------------------------------- */
 
 static void fault_hex32(void (*out)(const char *), uint32_t v)
