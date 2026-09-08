@@ -65,9 +65,28 @@ static bool ptr_owned_by_module(const void *p, size_t len)
         return true; /* a zero-length range trivially can't be touched */
     }
     module_t *m = &g_mdl_slot;
+
+    /* The MDL's STACK counts too, and leaving it out was a real hole in
+     * the wrong direction: it rejected legitimate calls rather than
+     * allowing illegitimate ones.
+     *
+     * Nothing noticed until I2C arrived, because every earlier vtable
+     * entry taking a pointer took a string -- a literal in .rodata (part
+     * of the text region) or a global (data). I2C is the first API where
+     * the CALLER supplies a buffer, and the natural way to write that is
+     * a local variable, which lives on the stack. Every such call was
+     * refused with the same code used for a genuine violation.
+     *
+     * The stack sits above the heap and the guard band, and ends at
+     * heap_stack_hi. The guard is deliberately excluded: it has no MPU
+     * region, so the MDL faults on it, which is the whole point of it.
+     */
+    uintptr_t stack_lo = m->heap_stack_lo + MDL_HEAP_SIZE + MDL_GUARD_SIZE;
+
     return ptr_in_range(addr, len, m->text_lo, m->text_hi) ||
            ptr_in_range(addr, len, m->data_lo, m->data_hi) ||
-           ptr_in_range(addr, len, m->heap_stack_lo, m->heap_stack_lo + MDL_HEAP_SIZE);
+           ptr_in_range(addr, len, m->heap_stack_lo, m->heap_stack_lo + MDL_HEAP_SIZE) ||
+           ptr_in_range(addr, len, stack_lo, m->heap_stack_hi);
 }
 
 /* ---- pin whitelist -------------------------------------------------- */
@@ -725,6 +744,60 @@ uint32_t host_cycles(void)
     return c;
 }
 
+/*
+ * The same containment check, exported for the peripheral drivers.
+ *
+ * host_i2c.c has to validate the buffers an MDL hands it, and it must be
+ * the SAME check -- a second implementation would drift, and the two
+ * would disagree about which addresses belong to the module. That is not
+ * a cosmetic disagreement: it is the boundary the sandbox is made of.
+ */
+bool host_ptr_owned_by_module(const void *p, size_t len)
+{
+    return ptr_owned_by_module(p, len);
+}
+
+/* Gated I2C entries. The implementations live in host_i2c.c; these are
+ * the privilege boundary and the watchdog feed. Returning from a
+ * transfer counts as progress for the same reason delay_ms() does -- the
+ * MDL was blocked inside the host, which is not the same as stuck. */
+extern int host_i2c_write_impl(int bus, int addr7, const void *data, uint32_t len);
+extern int host_i2c_read_impl(int bus, int addr7, void *data, uint32_t len);
+extern int host_i2c_write_read_impl(int bus, int addr7, const void *tx,
+                                     uint32_t txlen, void *rx, uint32_t rxlen);
+
+int host_i2c_write(int bus, int addr7, const void *data, uint32_t len) MDL_SYSCALL_GATE;
+int host_i2c_write(int bus, int addr7, const void *data, uint32_t len)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_i2c_write_impl(bus, addr7, data, len);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
+int host_i2c_read(int bus, int addr7, void *data, uint32_t len) MDL_SYSCALL_GATE;
+int host_i2c_read(int bus, int addr7, void *data, uint32_t len)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_i2c_read_impl(bus, addr7, data, len);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
+int host_i2c_write_read(int bus, int addr7, const void *tx, uint32_t txlen,
+                         void *rx, uint32_t rxlen) MDL_SYSCALL_GATE;
+int host_i2c_write_read(int bus, int addr7, const void *tx, uint32_t txlen,
+                         void *rx, uint32_t rxlen)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_i2c_write_read_impl(bus, addr7, tx, txlen, rx, rxlen);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
 const host_api_t g_host_api = {
     .abi_ver   = HOST_API_ABI_VERSION,
     .log       = host_log,
@@ -737,6 +810,9 @@ const host_api_t g_host_api = {
     .atoi      = host_atoi,
     .watchdog_feed = host_watchdog_feed,
     .cycles    = host_cycles,
+    .i2c_write      = host_i2c_write,
+    .i2c_read       = host_i2c_read,
+    .i2c_write_read = host_i2c_write_read,
 };
 
 void host_api_init(void)

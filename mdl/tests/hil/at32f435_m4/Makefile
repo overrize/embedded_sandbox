@@ -31,6 +31,7 @@ INCLUDES := \
   -I$(MDL)/arch/arm_cm4 \
   -I$(MDL)/host \
   -I$(MDL)/transport \
+  -I$(VENDOR)/middlewares/i2c_application_library \
   -I$(COMMON) \
   -I$(FRSRC)/include \
   -I$(FRPORT) \
@@ -72,6 +73,9 @@ C_SRCS := \
   $(MDL)/host/host_api.c \
   $(MDL)/host/host_events.c \
   $(MDL)/host/host_resources.c \
+  $(MDL)/host/host_i2c.c \
+  $(VENDOR)/middlewares/i2c_application_library/i2c_application.c \
+  $(VENDOR)/libraries/drivers/src/at32f435_437_i2c.c \
   $(MDL)/transport/protocol.c \
   $(MDL)/transport/console.c \
   $(MDL)/transport/usb_cdc.c \
@@ -114,7 +118,7 @@ OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(C_SRCS))) \
 vpath %.c . $(M2) $(COMMON) $(MDL)/core $(MDL)/arch/arm_cm4 $(MDL)/host $(MDL)/transport \
   $(VENDOR)/libraries/drivers/src $(VENDOR)/libraries/cmsis/cm4/device_support \
   $(FRSRC) $(FRSRC)/portable/memmang $(FRSRC)/portable/common $(FRPORT) \
-  $(USBDRV)/src $(USBCDC)
+  $(USBDRV)/src $(USBCDC) $(VENDOR)/middlewares/i2c_application_library
 vpath %.s $(VENDOR)/libraries/cmsis/cm4/device_support/startup/gcc
 
 .PHONY: all clean FORCE

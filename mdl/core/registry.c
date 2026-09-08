@@ -148,6 +148,11 @@ __attribute__((weak)) bool board_persist_forget(void)
  * take_line() returning false forever means the loop simply never has a
  * line to run, which is exactly right where nobody can type.
  */
+__attribute__((weak)) void console_put_u32(uint32_t v)
+{
+    (void)v;
+}
+
 __attribute__((weak)) void mdl_console_puts(const char *s)
 {
     (void)s;
@@ -178,4 +183,51 @@ __attribute__((weak)) uint32_t host_gpio_release_claims(uint32_t claimed)
 {
     (void)claimed;
     return 0;
+}
+
+/* Weak I2C claim/release. The real ones are in mdl/host/host_i2c.c; a
+ * target with no I2C hardware wired up simply never brings one up, and a
+ * claim it cannot honour is reported at load rather than silently
+ * granted. */
+__attribute__((weak)) bool host_i2c_claim(int instance)
+{
+    (void)instance;
+    return false;
+}
+
+__attribute__((weak)) void host_i2c_release(int instance)
+{
+    (void)instance;
+}
+
+/*
+ * Weak I2C transfer implementations, for a target with no I2C driver
+ * linked in (M2/M3, and the QEMU target).
+ *
+ * -1 is the vtable's 'refused' code, which is the truthful answer here:
+ * the MDL could not have declared a bus this build can honour, so any
+ * call it makes was never going to be allowed. Returning 0 would be far
+ * worse -- an MDL would read zeroes from a sensor that is not there and
+ * treat them as data.
+ */
+__attribute__((weak)) int host_i2c_write_impl(int bus, int addr7,
+                                               const void *data, uint32_t len)
+{
+    (void)bus; (void)addr7; (void)data; (void)len;
+    return -1;
+}
+
+__attribute__((weak)) int host_i2c_read_impl(int bus, int addr7,
+                                              void *data, uint32_t len)
+{
+    (void)bus; (void)addr7; (void)data; (void)len;
+    return -1;
+}
+
+__attribute__((weak)) int host_i2c_write_read_impl(int bus, int addr7,
+                                                    const void *tx, uint32_t txlen,
+                                                    void *rx, uint32_t rxlen)
+{
+    (void)bus; (void)addr7; (void)tx; (void)txlen; (void)rx; (void)rxlen;
+    return -1;
 }

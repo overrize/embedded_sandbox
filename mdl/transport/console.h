@@ -64,4 +64,9 @@ void mdl_console_greet(void);
  * task (mdl_transport_write() serialises internally). */
 void mdl_console_puts(const char *s);
 
+/* Decimal, for host code that needs to report a number in an error --
+ * there is no printf on this target and every caller writing its own
+ * digit loop is how they end up subtly different. */
+void console_put_u32(uint32_t v);
+
 #endif /* MDL_TRANSPORT_CONSOLE_H */

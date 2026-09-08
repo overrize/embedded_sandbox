@@ -110,6 +110,14 @@ static void reclaim_module(void)
      * after the task is deleted would notify a task that is gone. */
     mdl_events_disarm_all();
 
+    /* Release peripherals before the claims are cleared, same ordering
+     * reason as the GPIO release below. */
+    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
+        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_I2C) {
+            host_i2c_release((int)g_mdl_slot.res[i].id);
+        }
+    }
+
     uint32_t restored = host_gpio_release_claims(g_mdl_slot.gpio_claimed);
     g_mdl_slot.gpio_claimed = 0;
     g_mdl_slot.res_count    = 0;
@@ -185,9 +193,19 @@ static bool start_loaded_module(void)
     mdl_events_reset(g_mdl_slot.evt_queue_depth, g_mdl_slot.evt_rate_hz,
                       g_mdl_slot.task_handle);
     for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
-        if (g_mdl_slot.res[i].edge != (uint8_t)MDL_EDGE_NONE) {
+        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_GPIO &&
+            g_mdl_slot.res[i].edge != (uint8_t)MDL_EDGE_NONE) {
             (void)mdl_events_arm_gpio((int)g_mdl_slot.res[i].id,
                                        g_mdl_slot.res[i].edge);
+        }
+        /* A declared bus is brought up here, not on first use: an MDL
+         * that declared it should find it working, and a bus that cannot
+         * be initialised (wrong APB1 clock) should say so at load rather
+         * than surface as a transfer failure later. */
+        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_I2C) {
+            if (!host_i2c_claim((int)g_mdl_slot.res[i].id)) {
+                mdl_console_puts("[host] i2c bus could not be initialised" "\r\n");
+            }
         }
     }
     return true;

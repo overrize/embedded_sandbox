@@ -306,6 +306,11 @@ __attribute__((weak)) int board_write_buffer_disabled(void)
     return 0;
 }
 
+void console_put_u32(uint32_t v)
+{
+    put_u32(v);
+}
+
 static void cmd_persist(void)
 {
     uint32_t len = 0;

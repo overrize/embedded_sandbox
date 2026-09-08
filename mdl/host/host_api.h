@@ -46,7 +46,11 @@
  * distinction is forward-looking).
  */
 
-/* v6 (2026-09-08): cycles(), and a cycle stamp on every event, so an MDL
+/* v7 (2026-09-08): i2c_write/read/write_read -- the first peripheral an
+ * MDL can actually drive, rather than only claim. Requires the matching
+ * MDL_RES_I2C(n) declaration; the bus is checked on every call.
+ *
+ * v6 (2026-09-08): cycles(), and a cycle stamp on every event, so an MDL
  * can measure the sandbox's own overhead from inside itself instead of
  * the claim resting on assertion.
  *
@@ -68,7 +72,7 @@
  * v2 (2026-09-07): added atoi() to the vtable, and the two declaration
  * macros below -- console commands and hardware claims. Append-only:
  * every v1 entry keeps its slot and its meaning. */
-#define HOST_API_ABI_VERSION 6
+#define HOST_API_ABI_VERSION 7
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -363,6 +367,39 @@ typedef struct host_api {
      *     taken from inside the sandbox rather than a claim.
      */
     uint32_t (*cycles)(void);
+
+    /*
+     * I2C [ABI v7]. bus is the instance number, so i2c_write(1, ...) is
+     * I2C1 -- the same number MDL_RES_I2C(1) declares, and a bus you did
+     * not declare is refused on every call, not merely at load.
+     *
+     * addr7 is the 7-bit address as printed in a datasheet; the shift is
+     * the host's business. Buffers must lie inside your own memory, and
+     * a transfer is capped at 256 bytes so that check stays meaningful.
+     *
+     * Returns 0, or:
+     *   -1  refused -- bus not declared, bad address, buffer not yours
+     *   -2  nothing answered in time (unplugged? wrong address?)
+     *   -3  the transfer started and failed (NACK, arbitration, bus error)
+     * -2 and -3 are kept apart because they send you to different places:
+     * one is a wiring or address question, the other is not.
+     *
+     * These BLOCK, for up to 100ms. That is safe and deliberate: they run
+     * in your own task, which is the lowest priority in the system, so
+     * the supervisor and USB keep going. Returning from one counts as a
+     * watchdog feed, like delay_ms().
+     */
+    int (*i2c_write)(int bus, int addr7, const void *data, uint32_t len);
+    int (*i2c_read)(int bus, int addr7, void *data, uint32_t len);
+
+    /* Write then read with a repeated START -- no STOP in between.
+     * This is what almost every device actually needs ('write the
+     * register number, then read it'), and doing it as two separate
+     * calls inserts a STOP that makes many devices reset their address
+     * pointer, so the two-call version silently reads the wrong
+     * register. */
+    int (*i2c_write_read)(int bus, int addr7, const void *tx, uint32_t txlen,
+                           void *rx, uint32_t rxlen);
 } host_api_t;
 
 /*
@@ -419,6 +456,16 @@ bool host_gpio_exti_info(int pin, uint8_t *port_source, uint8_t *pin_source,
 /* Ungated cycle read, for host code (the event ISR stamps events with
  * it). The gated host_cycles() is the module-facing one. */
 uint32_t host_cycles_now(void);
+
+/* Is this buffer entirely inside the loaded MDL's own memory? Exported
+ * so the peripheral drivers validate with the same code the vtable does
+ * -- two implementations of this boundary would eventually disagree. */
+bool host_ptr_owned_by_module(const void *p, size_t len);
+
+/* Bring up / tear down an I2C bus an MDL has claimed. Called by the
+ * supervisor around load and unload, alongside the GPIO equivalents. */
+bool host_i2c_claim(int instance);
+void host_i2c_release(int instance);
 
 bool host_gpio_pin_id(int pin, uint8_t *out);
 
