@@ -56,7 +56,14 @@ $env:Path = "$ArmBin;$MinGwBin;$GitUsr;" + $env:Path
 $MakeArgs = @("PYTHON=$($Python -replace '\\','/')")
 
 $Root = $PSScriptRoot
-$Targets = if ($Target -eq 'all') { 'm0', 'm1', 'm2', 'm3', 'm4' } else { @($Target) }
+# 'qemu' is in the default set on purpose. Leaving it out let it break
+# silently twice: once when the vendor library moved under at32f435_lib/
+# and every HIL Makefile was updated but not that one, and once when
+# transport/protocol.c joined the shared sources without joining its
+# vpath. A target nobody builds is a target that is already broken -- and
+# its whole job is to prove core/ and arch/ do not quietly depend on the
+# AT32, which it cannot do while it is not compiled.
+$Targets = if ($Target -eq 'all') { 'm0', 'm1', 'm2', 'm3', 'm4', 'qemu' } else { @($Target) }
 
 # Windows PowerShell 5.1 wraps every stderr line from a native .exe in an
 # ErrorRecord when you redirect with 2>&1. Under ErrorActionPreference
@@ -71,7 +78,8 @@ $Results = @()
 $Failed  = $false
 
 foreach ($t in $Targets) {
-    $dir = Join-Path $Root "at32f435_$t"
+    $dir = if ($t -eq 'qemu') { Join-Path $Root ('..' + [IO.Path]::DirectorySeparatorChar + 'qemu' + [IO.Path]::DirectorySeparatorChar + 'cmsdk_m4') }
+            else { Join-Path $Root "at32f435_$t" }
     if (-not (Test-Path $dir)) { throw "no such target directory: $dir" }
 
     Write-Host "==== $t ====" -ForegroundColor Cyan

@@ -25,6 +25,7 @@ INCLUDES := \
   -I$(M0)/inc \
   -I$(COMMON) \
   -I$(MDL)/core \
+  -I$(MDL)/transport \
   -I$(MDL)/arch/arm_cm4 \
   -I$(MDL)/host
 

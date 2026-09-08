@@ -16,7 +16,12 @@ OBJCOPY := $(TOOLCHAIN)objcopy
 SIZE    := $(TOOLCHAIN)size
 PYTHON  := python
 
-VENDOR  := ../../../../AT32F435_437_Firmware_Library_V2.2.6
+# Moved under at32f435_lib/ on 2026-09-06. The five HIL Makefiles were
+# updated then; this one was missed, and nothing noticed because
+# build.ps1 only builds the HIL targets. That is the same build rot the
+# project has now hit three times: a shared thing changes, and the target
+# nobody builds routinely stops working silently.
+VENDOR  := ../../../../at32f435_lib/AT32F435_437_Firmware_Library_V2.2.6
 MDL     := ../../..
 M2      := ../../hil/at32f435_m2
 MODDIR  := ../../modules/$(MODULE)
@@ -79,7 +84,10 @@ OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(C_SRCS))) \
         $(patsubst %.s,$(BUILD)/%.o,$(notdir $(ASM_SRCS))) \
         $(BUILD)/module_mdl.o
 
-vpath %.c . $(M2) $(MDL)/core $(MDL)/arch/arm_cm4 $(FRSRC) \
+# transport/ has been in C_SRCS since protocol.c was added, but never in
+# vpath -- so this target has not built since then. Nothing caught it
+# because build.ps1 covers only the HIL targets.
+vpath %.c . $(M2) $(MDL)/core $(MDL)/transport $(MDL)/arch/arm_cm4 $(FRSRC) \
   $(FRSRC)/portable/memmang $(FRSRC)/portable/common $(FRPORT)
 
 .PHONY: all clean

@@ -1,4 +1,5 @@
 #include "registry.h"
+#include "console.h"
 #include "persist.h"
 #include "host_events.h"
 #include "arch_if.h"
@@ -133,4 +134,48 @@ __attribute__((weak)) bool board_persist_save(const void *image, uint32_t len)
 __attribute__((weak)) bool board_persist_forget(void)
 {
     return false;
+}
+
+/*
+ * Weak no-op console, for a target that has no text console at all.
+ *
+ * supervisor.c calls these unconditionally -- it prints why a saved MDL
+ * was rejected at boot, and drains typed lines in its main loop. The QEMU
+ * target has neither a CDC port nor a console; it reports through
+ * semihosting. Rather than #ifdef the supervisor, the console is optional
+ * the same way the transport and the event layer already are.
+ *
+ * take_line() returning false forever means the loop simply never has a
+ * line to run, which is exactly right where nobody can type.
+ */
+__attribute__((weak)) void mdl_console_puts(const char *s)
+{
+    (void)s;
+}
+
+__attribute__((weak)) void mdl_console_set_supervisor_handle(void *h)
+{
+    (void)h;
+}
+
+__attribute__((weak)) bool mdl_console_take_line(char **out_line)
+{
+    (void)out_line;
+    return false;
+}
+
+__attribute__((weak)) void mdl_console_execute(char *line)
+{
+    (void)line;
+}
+
+/*
+ * Weak pin release. The real one (mdl/host/host_api.c) returns each pin
+ * to its default state on unload; a target whose host layer has no pin
+ * table has nothing to hand back.
+ */
+__attribute__((weak)) uint32_t host_gpio_release_claims(uint32_t claimed)
+{
+    (void)claimed;
+    return 0;
 }

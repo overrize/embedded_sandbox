@@ -21,6 +21,7 @@ INCLUDES := \
   -I$(VENDOR)/libraries/drivers/inc \
   -Iinc \
   -I$(MDL)/core \
+  -I$(MDL)/transport \
   -I$(MDL)/host \
   -I$(MDL)/arch/arm_cm4
 
