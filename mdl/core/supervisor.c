@@ -116,6 +116,9 @@ static void reclaim_module(void)
         if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_I2C) {
             host_i2c_release((int)g_mdl_slot.res[i].id);
         }
+        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_UART) {
+            host_uart_release((int)g_mdl_slot.res[i].id);
+        }
     }
 
     uint32_t restored = host_gpio_release_claims(g_mdl_slot.gpio_claimed);
@@ -204,7 +207,12 @@ static bool start_loaded_module(void)
          * than surface as a transfer failure later. */
         if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_I2C) {
             if (!host_i2c_claim((int)g_mdl_slot.res[i].id)) {
-                mdl_console_puts("[host] i2c bus could not be initialised" "\r\n");
+                mdl_console_puts("[host] i2c bus could not be initialised\r\n");
+            }
+        }
+        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_UART) {
+            if (!host_uart_claim((int)g_mdl_slot.res[i].id)) {
+                mdl_console_puts("[host] uart could not be initialised\r\n");
             }
         }
     }

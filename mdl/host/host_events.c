@@ -113,6 +113,15 @@ wake:
     }
 }
 
+void mdl_events_post_uart(uint8_t instance, uint16_t waiting)
+{
+    /* payload is how many bytes are waiting, so a handler can size one
+     * read instead of looping. It is a snapshot: more may arrive between
+     * the ISR and the handler, which is why read() reports its own count
+     * and this number is a hint, not a contract. */
+    post_from_isr((uint8_t)MDL_EVT_UART, instance, (uint32_t)waiting);
+}
+
 bool mdl_events_take(mdl_event_t *out)
 {
     bool got = false;

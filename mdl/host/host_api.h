@@ -46,7 +46,11 @@
  * distinction is forward-looking).
  */
 
-/* v7 (2026-09-08): i2c_write/read/write_read -- the first peripheral an
+/* v8 (2026-09-08): uart_config/write/read. Unlike I2C, a UART is a
+ * stream: data arrives whether or not anyone is reading, so the host
+ * buffers it and MDL_EVT_UART says when there is some.
+ *
+ * v7 (2026-09-08): i2c_write/read/write_read -- the first peripheral an
  * MDL can actually drive, rather than only claim. Requires the matching
  * MDL_RES_I2C(n) declaration; the bus is checked on every call.
  *
@@ -72,7 +76,7 @@
  * v2 (2026-09-07): added atoi() to the vtable, and the two declaration
  * macros below -- console commands and hardware claims. Append-only:
  * every v1 entry keeps its slot and its meaning. */
-#define HOST_API_ABI_VERSION 7
+#define HOST_API_ABI_VERSION 8
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -400,6 +404,44 @@ typedef struct host_api {
      * register. */
     int (*i2c_write_read)(int bus, int addr7, const void *tx, uint32_t txlen,
                            void *rx, uint32_t rxlen);
+
+    /*
+     * UART [ABI v8]. bus is the instance, so uart_write(2, ...) is
+     * USART2 -- the number MDL_RES_UART(2) declares.
+     *
+     * A UART is not I2C. There is no transaction: bytes arrive whether
+     * or not anyone is listening, so the host runs a receive interrupt
+     * into a ring buffer and read() takes whatever has accumulated. That
+     * is why read() does NOT block and returns a count -- blocking until
+     * n bytes arrive would be a promise the wire cannot keep, and a
+     * reader that has to guess how much is coming is the usual way
+     * serial protocols deadlock.
+     *
+     * Declare MDL_MODULE_EVENTS() as well and MDL_EVT_UART wakes the MDL
+     * when bytes land, so it need not poll. Events coalesce, which is
+     * right here: what matters is that data exists, not how many times
+     * that became true.
+     */
+
+    /* Baud rate, 8N1. Call before the first transfer; the host defaults
+     * to 115200 if you never do. Returns 0, or -1 if the bus is not
+     * yours. */
+    int (*uart_config)(int bus, uint32_t baud);
+
+    /* Blocking, bounded. Returns 0 on success, -1 refused, -2 timeout. */
+    int (*uart_write)(int bus, const void *data, uint32_t len);
+
+    /* Non-blocking. Returns the number of bytes copied (0 if none are
+     * waiting), or -1 if refused. Bytes dropped because the MDL did not
+     * read fast enough are counted and reported by `status`, never
+     * silently discarded. */
+    int (*uart_read)(int bus, void *data, uint32_t maxlen);
+
+    /* Half-duplex self-test: TX and RX share the TX pin, so the
+     * peripheral receives its own output. For proving the receive path
+     * works without another device on the wire -- not a mode to talk to
+     * anything real in, since every byte sent comes back. */
+    int (*uart_loopback)(int bus, int enable);
 } host_api_t;
 
 /*
@@ -466,6 +508,10 @@ bool host_ptr_owned_by_module(const void *p, size_t len);
  * supervisor around load and unload, alongside the GPIO equivalents. */
 bool host_i2c_claim(int instance);
 void host_i2c_release(int instance);
+bool host_uart_claim(int instance);
+void host_uart_release(int instance);
+/* Bytes lost because the MDL did not read fast enough, for `status`. */
+uint32_t host_uart_dropped(int instance);
 
 bool host_gpio_pin_id(int pin, uint8_t *out);
 

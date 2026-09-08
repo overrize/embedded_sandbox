@@ -217,6 +217,12 @@ typedef enum {
     MDL_EVT_NONE    = 0,
     MDL_EVT_GPIO    = 1, /* id = whitelist pin, payload = level at capture */
     MDL_EVT_CONSOLE = 2, /* a console command; see module_cmd() */
+    /* Bytes arrived on a UART. id = instance; payload = how many are
+     * waiting. Coalescing is exactly right here and needs no special
+     * case: one event per byte would swamp the queue, and what a reader
+     * needs to know is 'there is data', not how many times that became
+     * true. */
+    MDL_EVT_UART    = 3,
 } mdl_evt_source_t;
 
 typedef struct {

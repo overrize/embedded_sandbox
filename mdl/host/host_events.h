@@ -46,6 +46,11 @@ bool mdl_events_take(mdl_event_t *out);
  * event and be restarted to run a command, so there is one queue. */
 bool mdl_events_post_console(void);
 
+/* Bytes landed on a UART. Called from its receive ISR; coalesces with
+ * any pending event for the same instance, which is what keeps a busy
+ * line from flooding a queue sized for buttons. */
+void mdl_events_post_uart(uint8_t instance, uint16_t waiting);
+
 /* For `status`: what was lost, and whether the declared rate held. */
 typedef struct {
     uint32_t delivered;

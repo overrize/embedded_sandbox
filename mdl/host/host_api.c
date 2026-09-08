@@ -798,6 +798,51 @@ int host_i2c_write_read(int bus, int addr7, const void *tx, uint32_t txlen,
     return r;
 }
 
+extern int host_uart_config_impl(int bus, uint32_t baud);
+extern int host_uart_write_impl(int bus, const void *data, uint32_t len);
+extern int host_uart_read_impl(int bus, void *data, uint32_t maxlen);
+extern int host_uart_loopback_impl(int bus, int enable);
+
+int host_uart_config(int bus, uint32_t baud) MDL_SYSCALL_GATE;
+int host_uart_config(int bus, uint32_t baud)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_uart_config_impl(bus, baud);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
+int host_uart_write(int bus, const void *data, uint32_t len) MDL_SYSCALL_GATE;
+int host_uart_write(int bus, const void *data, uint32_t len)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_uart_write_impl(bus, data, len);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
+int host_uart_loopback(int bus, int enable) MDL_SYSCALL_GATE;
+int host_uart_loopback(int bus, int enable)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_uart_loopback_impl(bus, enable);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
+int host_uart_read(int bus, void *data, uint32_t maxlen) MDL_SYSCALL_GATE;
+int host_uart_read(int bus, void *data, uint32_t maxlen)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_uart_read_impl(bus, data, maxlen);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
 const host_api_t g_host_api = {
     .abi_ver   = HOST_API_ABI_VERSION,
     .log       = host_log,
@@ -813,6 +858,10 @@ const host_api_t g_host_api = {
     .i2c_write      = host_i2c_write,
     .i2c_read       = host_i2c_read,
     .i2c_write_read = host_i2c_write_read,
+    .uart_config    = host_uart_config,
+    .uart_write     = host_uart_write,
+    .uart_read      = host_uart_read,
+    .uart_loopback  = host_uart_loopback,
 };
 
 void host_api_init(void)

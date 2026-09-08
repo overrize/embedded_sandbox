@@ -231,3 +231,54 @@ __attribute__((weak)) int host_i2c_write_read_impl(int bus, int addr7,
     (void)bus; (void)addr7; (void)tx; (void)txlen; (void)rx; (void)rxlen;
     return -1;
 }
+
+/* Weak UART, for a target with no serial driver linked. -1 is the
+ * vtable's 'refused' code and is the honest answer: a build with no
+ * driver could not have honoured the claim either. Returning 0 from
+ * read() would be worse -- an MDL would treat 'no driver' as 'no data
+ * yet' and wait forever for bytes nothing is receiving. */
+__attribute__((weak)) bool host_uart_claim(int instance)
+{
+    (void)instance;
+    return false;
+}
+
+__attribute__((weak)) void host_uart_release(int instance)
+{
+    (void)instance;
+}
+
+__attribute__((weak)) uint32_t host_uart_dropped(int instance)
+{
+    (void)instance;
+    return 0u;
+}
+
+__attribute__((weak)) int host_uart_config_impl(int bus, uint32_t baud)
+{
+    (void)bus; (void)baud;
+    return -1;
+}
+
+__attribute__((weak)) int host_uart_write_impl(int bus, const void *data, uint32_t len)
+{
+    (void)bus; (void)data; (void)len;
+    return -1;
+}
+
+__attribute__((weak)) int host_uart_loopback_impl(int bus, int enable)
+{
+    (void)bus; (void)enable;
+    return -1;
+}
+
+__attribute__((weak)) int host_uart_read_impl(int bus, void *data, uint32_t maxlen)
+{
+    (void)bus; (void)data; (void)maxlen;
+    return -1;
+}
+
+__attribute__((weak)) void mdl_events_post_uart(uint8_t instance, uint16_t waiting)
+{
+    (void)instance; (void)waiting;
+}
