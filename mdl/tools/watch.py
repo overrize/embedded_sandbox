@@ -205,6 +205,9 @@ def push_module(mdl_path: Path, port: str, baud: int, verify: bool = False,
         print("✗ pyserial not installed -- run: pip install pyserial", file=sys.stderr)
         return
 
+    # No UNLOAD first: since F3 the device swaps atomically, validating
+    # the replacement before it destroys what is running. Sending UNLOAD
+    # would put the board back in the gap that change removed.
     data = mdl_path.read_bytes()
     frame = build_frame(CMD_LOAD_PERSIST if persist else CMD_LOAD, data)
 

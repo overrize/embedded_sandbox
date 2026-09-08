@@ -202,12 +202,14 @@ class Server:
             return {"ok": False, "error": r.diagnostics[0] if r.diagnostics
                     else "build failed", "diagnostics": r.diagnostics}
 
-        replaced = False
+        # Deliberately no unload first. The device replaces atomically
+        # now (F3): it validates the new image while the old MDL is still
+        # running, and only then tears it down. Unloading here would
+        # recreate exactly the gap that removed -- and would leave the
+        # board empty if the new image then turned out to be bad.
         resp, payload = self.dev.request(proto.CMD_STATUS)
         st = proto.decode_status(payload) if resp == proto.RESP_STATUS else {}
-        if proto.SLOT_STATES.get(st.get("slot_state")) not in (None, "EMPTY"):
-            self.dev.request(proto.CMD_UNLOAD)
-            replaced = True
+        replaced = proto.SLOT_STATES.get(st.get("slot_state")) not in (None, "EMPTY")
 
         image = r.mdl_path.read_bytes()
         cmd = (proto.CMD_LOAD_PERSIST if args.get("persist")

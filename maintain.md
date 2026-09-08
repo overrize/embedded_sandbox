@@ -347,7 +347,7 @@ mdl/
 | R3 | P1 资源类型扩展 + 引脚级冲突展开 | claude/opus-5 | **机制已验证** | TIMER/I2C/UART/SPI/ADC；需板级功能↔引脚表 |
 | F1 | P1 中断 / 回调（两段式派发） | claude/opus-5 | **已验证** | ABI v3；先定事件队列溢出策略；依赖 H2 |
 | F2 | P3 flash 持久化 | claude/opus-5 | **已验证** | flash 末 16K；真机断电重插后自动恢复 |
-| F3 | P3 原子热替换 | | 待认领 | 现在 unload→load 有空窗 |
+| F3 | P3 原子热替换 | claude/opus-5 | **已验证** | 先校验后拆除；坏镜像被拒时旧 MDL 仍在跑 |
 | P5 | P2 基准测试（对标 LuaTOS） | claude/opus-5 | **已验证** | 三个数全部真机取得，308 样本；见 §9 |
 | H1 | 真机 HIL 配置修正（ozone README 板级问题） | claude/opus-5 | **完成** | 料号/Flash 长度/HEXT 全改；五目标重编通过 |
 | H2 | **P1 看门狗误杀 → `watchdog_feed` 进 ABI** | claude/opus-5 | **已验证** | **F1 的前置**：常驻 MDL 阻塞等事件时会被隐式喂狗机制误杀 |
@@ -372,6 +372,50 @@ mdl/
 ## 9. 工作日志
 
 > 新条目加在最上面。格式：`### YYYY-MM-DD 名字/agent id` + 简短条目列表。
+
+### 2026-09-08 claude/opus-5（P3：F3 原子热替换 —— P 序列清零）
+
+真机三点全过：
+
+```
+断电重插后          slot : RUNNING sw3_irq        （F2 未被 F3 破坏）
+推坏镜像 self_clash  RESP_ERROR: ... 都是 PA3
+                    slot : RUNNING sw3_irq        ← 旧的毫发无损
+推好镜像 sw4_green   RESP_OK，无需先 unload
+                    [host] gpio released -> default: 0 2
+                    slot : RUNNING sw4_green
+```
+
+**先说做不到的**：单槽单 arena，**零窗口不可能**——新镜像就是往旧镜像的内存上搬，
+旧的必须先死。这个窗口消不掉，没有假装消掉。
+
+能消掉的是**进入窗口的理由**。原来工具端是 `UNLOAD` → `LOAD` 两帧，中间设备完全
+没有 MDL（引脚回默认、中断解除布防），而如果新镜像有问题，**旧功能已经没了，板子
+就空在那儿**。现在：
+
+1. 校验新镜像（magic/CRC/ABI/arch/尺寸/重定位/资源冲突）——**旧 MDL 照常运行**
+2. 失败 → 报错返回，代价为零
+3. 通过 → 才拆旧的，然后搬运 + 起任务（窗口只剩这一段）
+
+**校验与实际加载共用同一份代码**（`mdl_load()` 内部调 `mdl_load_validate()`）。
+分成两份实现迟早会出现"预检通过、加载器却拒绝"，那比不做预检更糟。
+
+顺带把 `check_resources()` 改成**纯函数**：它原来把认领写进 slot，加载时无害，
+**校验时就是污染正在运行的 MDL 的状态**。
+
+窗口内起任务失败的话旧的确实没了，这种情况不装作没事——回复直接说
+`the previous MDL is gone, power-cycle to restore the saved one`，F2 的 flash
+store 就是恢复路径。
+
+`mdl_supervisor_restore()` 也改成复用 `start_loaded_module()`：**恢复的 MDL 和
+推送的 MDL 必须以同样方式起来**，否则那个差异只会在客户现场显形。
+
+工具侧 `watch.py` 与 MCP `deploy_feature` 不再先 unload——那正是本次要消掉的东西。
+
+---
+
+**P 序列到此全部完成。** P0（R1/R2）、P1（H2/F1/R3）、P2（B2/P5/A1–A3）、
+P3（F2/F3）。剩余未做项只有 H10（复跑 QEMU，本机未装）和 X1/X2（跨架构，X 序列）。
 
 ### 2026-09-08 claude/opus-5（P3：F2 掉电保持，真机验证）
 

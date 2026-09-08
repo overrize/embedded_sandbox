@@ -11,6 +11,13 @@
 #include "task.h"
 #include <string.h>
 
+/* Defined below, next to handle_load(); declared here because
+ * mdl_supervisor_restore() is above it and must use the same startup
+ * path -- a restored MDL coming up differently from a pushed one is a
+ * difference that would only ever show at a customer site. */
+static bool start_loaded_module(void);
+
+
 static TaskHandle_t s_supervisor_handle;
 
 /*
@@ -49,18 +56,9 @@ void mdl_supervisor_restore(void)
         return;
     }
 
-    host_api_pool_reset(&g_mdl_slot);
-    if (!mdl_start_module_task(&g_mdl_slot, &g_host_api)) {
+    if (!start_loaded_module()) {
         g_mdl_slot.state = MDL_SLOT_EMPTY;
         return;
-    }
-    mdl_events_reset(g_mdl_slot.evt_queue_depth, g_mdl_slot.evt_rate_hz,
-                      g_mdl_slot.task_handle);
-    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
-        if (g_mdl_slot.res[i].edge != (uint8_t)MDL_EDGE_NONE) {
-            (void)mdl_events_arm_gpio((int)g_mdl_slot.res[i].id,
-                                       g_mdl_slot.res[i].edge);
-        }
     }
     mdl_console_puts("[host] restored saved MDL: ");
     mdl_console_puts(g_mdl_slot.name);
@@ -145,51 +143,45 @@ void mdl_supervisor_request_unload(void)
     reclaim_module();
 }
 
-static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
+/*
+ * Send a load failure, with the detail when there is one. 'resource
+ * conflict' alone tells the person pushing the MDL nothing they can act
+ * on; mdl_load_detail() names the pin and its holder.
+ */
+static void send_load_error(mdl_load_status_t st)
 {
-    if (g_mdl_slot.state == MDL_SLOT_RUNNING || g_mdl_slot.state == MDL_SLOT_LOADED) {
-        /* v1: one slot -- an explicit unload is required before loading
-         * something new, rather than silently replacing a running
-         * module out from under itself. */
-        mdl_proto_send_response(MDL_RESP_ERROR, "slot busy -- unload first", 25);
+    const char *msg = mdl_load_status_str(st);
+    const char *detail = mdl_load_detail();
+    if (detail[0] == 0) {
+        mdl_proto_send_response(MDL_RESP_ERROR, msg, (uint32_t)strlen(msg));
         return;
     }
-
-    mdl_load_status_t st = mdl_load(&g_mdl_slot, payload, len,
-                                     HOST_API_ABI_VERSION, MDL_ARCH_ARMV7M);
-    if (st != MDL_LOAD_OK) {
-        /* A resource conflict is the one failure whose generic status
-         * string is useless alone -- 'resource conflict' does not say
-         * which pin, or who holds it. mdl_load_detail() carries that. */
-        const char *msg = mdl_load_status_str(st);
-        const char *detail = mdl_load_detail();
-        if (detail[0] != 0) {
-            char buf[112];
-            size_t n = 0;
-            for (const char *q = msg; *q != 0 && n < sizeof(buf) - 2u; q++) {
-                buf[n++] = *q;
-            }
-            buf[n++] = ':';
-            buf[n++] = ' ';
-            for (const char *q = detail; *q != 0 && n < sizeof(buf); q++) {
-                buf[n++] = *q;
-            }
-            mdl_proto_send_response(MDL_RESP_ERROR, buf, (uint32_t)n);
-        } else {
-            mdl_proto_send_response(MDL_RESP_ERROR, msg, (uint32_t)strlen(msg));
-        }
-        return;
+    char buf[112];
+    size_t n = 0;
+    for (const char *q = msg; *q != 0 && n < sizeof(buf) - 2u; q++) {
+        buf[n++] = *q;
     }
+    buf[n++] = ':';
+    buf[n++] = ' ';
+    for (const char *q = detail; *q != 0 && n < sizeof(buf); q++) {
+        buf[n++] = *q;
+    }
+    mdl_proto_send_response(MDL_RESP_ERROR, buf, (uint32_t)n);
+}
 
+/*
+ * Bring a freshly-loaded MDL to life: pool, task, events, interrupts.
+ * Shared by handle_load() and mdl_supervisor_restore() so a restored MDL
+ * and a pushed one cannot come up differently.
+ */
+static bool start_loaded_module(void)
+{
     host_api_pool_reset(&g_mdl_slot);
     if (!mdl_start_module_task(&g_mdl_slot, &g_host_api)) {
-        mdl_proto_send_response(MDL_RESP_ERROR, "xTaskCreateRestricted failed", 29);
-        g_mdl_slot.state = MDL_SLOT_EMPTY;
-        return;
+        return false;
     }
-
-    /* Arm declared interrupts only now: the ISR notifies the module task,
-     * so the task has to exist first. */
+    /* Arm interrupts only now: the ISR notifies the module task, so the
+     * task has to exist first. */
     mdl_events_reset(g_mdl_slot.evt_queue_depth, g_mdl_slot.evt_rate_hz,
                       g_mdl_slot.task_handle);
     for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
@@ -197,6 +189,65 @@ static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
             (void)mdl_events_arm_gpio((int)g_mdl_slot.res[i].id,
                                        g_mdl_slot.res[i].edge);
         }
+    }
+    return true;
+}
+/*
+ * Load, replacing whatever is running [F3].
+ *
+ * The old behaviour was to refuse when the slot was busy, which pushed
+ * the problem to the caller: tools did UNLOAD then LOAD, and between
+ * those two frames the device had no MDL at all -- pins back to default,
+ * interrupts disarmed. If the new image then turned out to be bad, the
+ * old feature was already gone and the board simply sat there empty.
+ *
+ * ONE ARENA MEANS THE WINDOW CANNOT BE ZERO. The new image is copied over
+ * the old one's memory, so the old MDL must be destroyed first. What is
+ * removable is every REASON to enter that window: the image is fully
+ * validated -- magic, CRC, ABI, arch, sizes, relocations, resource
+ * conflicts -- while the old MDL is still running. A rejected replacement
+ * therefore costs nothing at all.
+ *
+ * What remains inside the window is a memcpy and a task creation. If the
+ * task fails to start there, the old MDL is already gone; the flash store
+ * is the recovery path, and the reply says so rather than leaving someone
+ * to work out why the device went quiet.
+ */
+static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
+{
+    mdl_load_status_t vst = mdl_load_validate(&g_mdl_slot, payload, len,
+                                                HOST_API_ABI_VERSION,
+                                                MDL_ARCH_ARMV7M);
+    if (vst != MDL_LOAD_OK) {
+        /* Nothing has been touched: whatever was running still is. */
+        send_load_error(vst);
+        return;
+    }
+
+    bool replacing = (g_mdl_slot.state != MDL_SLOT_EMPTY);
+    if (replacing) {
+        reclaim_module();
+    }
+
+    mdl_load_status_t st = mdl_load(&g_mdl_slot, payload, len,
+                                     HOST_API_ABI_VERSION, MDL_ARCH_ARMV7M);
+    if (st != MDL_LOAD_OK) {
+        /* Validation passed and the copy still failed -- so this is not a
+         * bad image but something wrong on the device side. Say that
+         * plainly instead of reporting it as a rejected module. */
+        g_mdl_slot.state = MDL_SLOT_EMPTY;
+        send_load_error(st);
+        return;
+    }
+
+    if (!start_loaded_module()) {
+        g_mdl_slot.state = MDL_SLOT_EMPTY;
+        mdl_proto_send_response(MDL_RESP_ERROR,
+            replacing ? "task creation failed; the previous MDL is gone, "
+                         "power-cycle to restore the saved one"
+                      : "xTaskCreateRestricted failed",
+            replacing ? 76u : 28u);
+        return;
     }
 
     /* Persist only once the MDL is actually running. Saving an image that
@@ -210,7 +261,6 @@ static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
 
     mdl_proto_send_response(MDL_RESP_OK, NULL, 0);
 }
-
 static void handle_unload(void)
 {
     if (g_mdl_slot.state == MDL_SLOT_EMPTY) {

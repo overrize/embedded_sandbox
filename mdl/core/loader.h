@@ -52,6 +52,20 @@ const char *mdl_load_detail(void);
  * HOST_API_ABI_VERSION and MDL_ARCH_ARMV7M (or whatever this build's
  * arch is) through explicitly.
  */
+/*
+ * Would this image load? Answers without touching the arena or the slot,
+ * so it can be asked while an MDL is still running [F3].
+ *
+ * There is one arena, so replacing a running MDL means destroying it
+ * before the new one exists; that window is not removable. This removes
+ * the REASONS to enter it -- a bad image is rejected while the old one is
+ * still doing its job. mdl_load() runs exactly these checks itself, so
+ * the two cannot disagree.
+ */
+mdl_load_status_t mdl_load_validate(const module_t *m, const void *image,
+                                     size_t image_len, uint16_t expected_abi_ver,
+                                     mdl_arch_t expected_arch);
+
 mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
                             uint16_t expected_abi_ver, mdl_arch_t expected_arch);
 

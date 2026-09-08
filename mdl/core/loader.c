@@ -74,10 +74,15 @@ __attribute__((weak)) bool mdl_res_check(const mdl_res_t *res, uint32_t count,
  * that is going to be rejected must not have left half of itself in the
  * text region first. Fills g_detail on conflict.
  */
-static mdl_load_status_t check_resources(module_t *m, const mdl_res_t *res,
+/*
+ * Pure check: writes nothing. It used to record the claims into the slot
+ * as it went, which is fine when loading and wrong when merely
+ * validating -- a replacement being checked must not touch the state of
+ * the MDL still running. mdl_load() records them afterwards instead.
+ */
+static mdl_load_status_t check_resources(const mdl_res_t *res,
                                           uint32_t count)
 {
-    uint32_t claimed = 0;
 
     if (count > MDL_MAX_RES) {
         return MDL_LOAD_ERR_BAD_RES;
@@ -97,12 +102,6 @@ static mdl_load_status_t check_resources(module_t *m, const mdl_res_t *res,
             return MDL_LOAD_ERR_BAD_RES;
         }
 
-        if (res[i].kind == (uint8_t)MDL_RES_KIND_GPIO) {
-            claimed |= (1u << res[i].id);
-        }
-        /* Kept verbatim: a bitmap loses the edge selection, and the
-         * supervisor needs it to arm the interrupt after the load. */
-        m->res[i] = res[i];
     }
 
     /* One call, after the per-claim sanity checks: the host expands every
@@ -112,15 +111,25 @@ static mdl_load_status_t check_resources(module_t *m, const mdl_res_t *res,
         return MDL_LOAD_ERR_RES_CONFLICT;
     }
 
-    m->res_count    = (uint8_t)count;
-    m->gpio_claimed = claimed;
     return MDL_LOAD_OK;
 }
 
-mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
-                            uint16_t expected_abi_ver, mdl_arch_t expected_arch)
-{
-    g_detail[0] = '\0';
+/*
+ * Everything that can be decided WITHOUT writing to the arena.
+ *
+ * Split out for F3. Replacing a running MDL means destroying it before
+ * the new one exists -- there is one arena, so that window cannot be
+ * removed. What can be removed is every reason to enter it: if the new
+ * image is going to be rejected, it should be rejected while the old one
+ * is still running, not after it has been torn down.
+ *
+ * Writes nothing, reads no slot state except the arena bounds, so it is
+ * safe to call against a slot whose MDL is live.
+ */
+mdl_load_status_t mdl_load_validate(const module_t *m, const void *image,
+                                     size_t image_len, uint16_t expected_abi_ver,
+                                     mdl_arch_t expected_arch)
+{    g_detail[0] = '\0';
 
     if (image_len < sizeof(mdl_header_t)) {
         return MDL_LOAD_ERR_TOO_SMALL;
@@ -157,9 +166,8 @@ mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
     /* Payload layout on disk: [text][data][got][reloc_table]. Offsets
      * below are all relative to `payload` (i.e. past the header), per
      * mdl_header_t's own field comments. */
-    const uint8_t *text_src  = payload;
-    const uint8_t *data_src  = payload + hdr->text_size;
-    const uint8_t *got_src   = payload + hdr->got_off;
+    /* Only the reloc table is needed to CHECK; the source pointers for
+     * text/data/got matter to the copy, which lives in mdl_load(). */
     const mdl_reloc_t *reloc_src = (const mdl_reloc_t *)(payload + hdr->reloc_off);
 
     for (uint32_t i = 0; i < hdr->reloc_count; i++) {
@@ -180,12 +188,45 @@ mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
     }
 
     mdl_load_status_t res_st = check_resources(
-        m, (const mdl_res_t *)(payload + hdr->res_off), hdr->res_count);
+        (const mdl_res_t *)(payload + hdr->res_off), hdr->res_count);
     if (res_st != MDL_LOAD_OK) {
-        m->gpio_claimed = 0;
         return res_st;
     }
 
+    return MDL_LOAD_OK;
+}
+
+mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
+                            uint16_t expected_abi_ver, mdl_arch_t expected_arch)
+{
+    /* Same checks, same order, one implementation -- a separate 'quick
+     * check' that drifted from the real one would pass images the loader
+     * then rejected, which is worse than not checking early at all. */
+    mdl_load_status_t vst = mdl_load_validate(m, image, image_len,
+                                                expected_abi_ver, expected_arch);
+    if (vst != MDL_LOAD_OK) {
+        return vst;
+    }
+
+    const mdl_header_t *hdr = (const mdl_header_t *)image;
+    const uint8_t *payload = (const uint8_t *)image + sizeof(mdl_header_t);
+    size_t got_bytes = (size_t)hdr->got_count * 4u;
+    const uint8_t *text_src  = payload;
+    const uint8_t *data_src  = payload + hdr->text_size;
+    const uint8_t *got_src   = payload + hdr->got_off;
+    const mdl_reloc_t *reloc_src = (const mdl_reloc_t *)(payload + hdr->reloc_off);
+
+    /* Record the claims now that the image is committed to. */
+    const mdl_res_t *res = (const mdl_res_t *)(payload + hdr->res_off);
+    uint32_t claimed = 0;
+    for (uint32_t i = 0; i < hdr->res_count; i++) {
+        m->res[i] = res[i];
+        if (res[i].kind == (uint8_t)MDL_RES_KIND_GPIO) {
+            claimed |= (1u << res[i].id);
+        }
+    }
+    m->res_count    = (uint8_t)hdr->res_count;
+    m->gpio_claimed = claimed;
     uint8_t *text_dst = (uint8_t *)m->text_lo;
     uint8_t *got_dst   = (uint8_t *)m->data_lo;
     uint8_t *data_dst  = got_dst + got_bytes;
