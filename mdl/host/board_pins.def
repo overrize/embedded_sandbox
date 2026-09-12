@@ -72,6 +72,10 @@ MDL_PIN_OWNER(P(4, 15), YIELDS, "the host USB-link LED")
 
 MDL_GPIO_PIN(0, P(3, 10), "LEDB (PD10, LED3 blue)")
 MDL_GPIO_PIN(1, P(4, 15), "LEDG (PE15, LED4 green)")
+/* PA3 is NOT brought out to a header -- SW3 is the only thing that can
+ * drive it. That rules out jumpering it to another pin, which is worth
+ * recording here because it is the obvious way to test USART2 reception
+ * and it is not available on this board. */
 MDL_GPIO_PIN(2, P(0,  3), "BTN0 (PA3, SW3)")
 MDL_GPIO_PIN(3, P(4,  2), "BTN1 (PE2, SW4)")
 MDL_GPIO_PIN(4, P(0,  9), "U1TX (PA9, DAP debug UART)")

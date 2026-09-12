@@ -1,23 +1,30 @@
 /*
  * UART from inside the sandbox [ABI v8]: transmit, event-driven receive.
  *
- * HOW THIS IS TESTABLE WITHOUT A SECOND DEVICE. `uart` runs a loopback
- * self-test: half-duplex mode ties TX and RX to the same pin, so the
- * peripheral receives its own output. That covers the entire chain -- baud
- * divisor, pin mux, receive interrupt, ring buffer, event delivery -- with
- * nothing wired up and nobody pressing anything.
+ * HOW RECEPTION IS TESTED HERE: the SW3 button IS the signal source.
  *
- * The first attempt used the SW3 button, since USART2's RX is PA3 and PA3
- * is also that button, so pressing it pulls the line low like a start bit.
- * Whether a receiver frames that as a character is UNTESTED -- a mechanical
- * edge lasts milliseconds against a 104us bit period at 9600 baud, which
- * argues against it, but nobody has actually pressed the button while the
- * counters were being watched, so that is a prediction and not a result.
+ * PA3 is USART2's RX and also the SW3 button, and PA3 is not brought out
+ * to a header on this board -- so there is no jumper to run and no second
+ * device to attach. Pressing SW3 pulls the receive line low, which is a
+ * start bit, and that is the only signal this board can put on that pin.
  *
- * The reason to replace it is not that it failed. It is that it needs a
- * person, so it cannot be repeated, cannot run unattended, and cannot
- * distinguish "the receive path is broken" from "nobody pressed anything"
- * -- which is exactly the ambiguity that wasted a round here.
+ * The baud rate is what makes it work, and 1200 is chosen, not inherited:
+ * one bit lasts 833us there, so a press is measured in bit times rather
+ * than in hundreds of them.
+ *
+ *   a very short tap (~2-3ms)  start bit, a few low data bits, then the
+ *                              line is high again for the stop bit --
+ *                              FRAMES AS A REAL BYTE, and the whole chain
+ *                              runs: ISR, ring, event, module_event()
+ *   a normal press (30ms+)     line still low where the stop bit belongs
+ *                              -- a FRAMING ERROR, which the host counts
+ *
+ * Both outcomes are evidence, which is the point. What was measured
+ * before -- zero bytes AND zero errors -- means the receiver was never
+ * triggered at all, and that is the only result that says the path is
+ * broken. An earlier version of this comment predicted that a mechanical
+ * edge was simply too slow to frame; that reasoning was done at 9600 baud
+ * and never actually run with a finger on the button.
  *
  * Note this MDL declares only MDL_RES_UART(2). It does NOT declare
  * MDL_RES_GPIO(2), and could not: both are PA3, and the host refuses one
@@ -72,15 +79,15 @@ static char *put_str(char *w, const char *end, const char *t)
 
 int module_init(const host_api_t *host)
 {
-    if (host->uart_config(2, 9600) != 0) {
+    if (host->uart_config(2, 1200) != 0) {
         host->log("uart_echo: uart_config refused -- is USART2 declared?");
         return -1;
     }
 
-    /* 9600 is left over from the button experiment, where a longer bit
-     * period seemed more likely to catch a slow mechanical edge. It is
-     * kept because loopback works at any rate and a slower one makes the
-     * 3-byte probe comfortably longer than the 50ms wait below. */
+    /* 1200, so a button press lands in the right order of magnitude
+     * against the 833us bit period. The host refuses anything below 1200,
+     * so this is as slow as the receiver can be made without a reflash --
+     * and it is slow enough. */
     const char hello[] = "MDL uart alive\r\n";
     int w = host->uart_write(2, hello, sizeof(hello) - 1);
     if (w == -2) {
@@ -88,7 +95,7 @@ int module_init(const host_api_t *host)
     } else if (w != 0) {
         host->log("uart_echo: transmit refused");
     } else {
-        host->log("uart_echo: sent a line on PA2 at 9600; run `uart` to self-test RX");
+        host->log("uart_echo: 1200 baud. PRESS SW3 -- short taps frame as bytes, long presses as errors. Then run `uart`.");
     }
     return 0;
 }
@@ -127,9 +134,11 @@ int module_cmd(const host_api_t *host, int argc, const char *const *argv)
      * It is left in because it costs nothing and would immediately show a
      * change if that silicon behaviour were ever different.
      *
-     * To actually verify reception, put a signal on the pins: a wire from
-     * PA2 to PA3 turns this into a real loopback, and then `uart` reports
-     * bytes. Nothing here can substitute for that. */
+     * PA3 is not brought out to a header on this board, so there is no
+     * jumper to run -- an earlier version of this comment suggested one,
+     * which was advice for a board this is not. The SW3 button is the only
+     * signal source PA3 has, which is why the baud rate above is set for
+     * it rather than for a serial peer. */
     if (host->uart_loopback(2, 1) != 0) {
         host->log("  loopback not available");
     } else {
@@ -148,7 +157,7 @@ int module_cmd(const host_api_t *host, int argc, const char *const *argv)
             lw = put_u32(lw, lend, got);
             lw = put_str(lw, lend, got == 3u
                     ? "  -- receive path WORKS"
-                    : "  -- expected on this part; wire PA2 to PA3 to test RX");
+                    : "  -- expected on this part; press SW3 instead");
             *lw = 0;
             host->log(g_line);
         }
