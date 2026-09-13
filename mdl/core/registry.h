@@ -119,6 +119,32 @@ typedef struct module module_t;
 /* v1: exactly one module slot. */
 extern module_t g_mdl_slot;
 
+/*
+ * WHICH MDL IS CALLING? [S0]
+ *
+ * Every gated host entry needs this before it can answer "is this resource
+ * yours" or "is this buffer yours". With one slot the question had an
+ * implicit answer; with more than one it does not, and the answer must not
+ * come from the caller.
+ *
+ * IDENTITY IS THE TASK HANDLE, and that choice is the security-relevant
+ * part. An MDL could have been made to pass its own slot id through the
+ * ABI -- and then an MDL could claim to be a different one. The task handle
+ * is assigned by the kernel and read by the host; the module never touches
+ * it and has no way to forge it.
+ *
+ * Returns NULL when the caller is not a module task at all (host code, an
+ * ISR, the supervisor). Callers must treat that as "refuse", not as "the
+ * only slot" -- host paths that legitimately bypass the check have their
+ * own entries, like host_gpio_direct_set().
+ */
+module_t *mdl_caller_slot(void);
+
+/* Did the calling MDL declare this resource? One implementation for every
+ * driver, because four near-identical copies of a permission check is how
+ * they drift apart -- and a permission check that drifts is a hole. */
+bool mdl_caller_declared(uint8_t kind, uint8_t id);
+
 void registry_init(void);
 
 /*

@@ -40,7 +40,12 @@ extern void vPortResetPrivilege(BaseType_t xRunningPrivileged);
  */
 static void feed_watchdog(void)
 {
-    g_mdl_slot.last_active_tick = (uint32_t)xTaskGetTickCount();
+    /* Credit the caller, not the singleton [S0]: a busy MDL must not be
+     * able to keep a stuck one alive by feeding on its behalf. */
+    module_t *fed = mdl_caller_slot();
+    if (fed != NULL) {
+        fed->last_active_tick = (uint32_t)xTaskGetTickCount();
+    }
 }
 
 /* ---- pointer validation --------------------------------------------
@@ -64,7 +69,14 @@ static bool ptr_owned_by_module(const void *p, size_t len)
     if (len == 0) {
         return true; /* a zero-length range trivially can't be touched */
     }
-    module_t *m = &g_mdl_slot;
+    /* The CALLER's memory, not "the" module's [S0]. With one slot these
+     * were the same thing; with more than one, checking a buffer against
+     * the wrong module's arena would let one MDL hand the host a pointer
+     * into another's memory and have it accepted. */
+    module_t *m = mdl_caller_slot();
+    if (m == NULL) {
+        return false;
+    }
 
     /* The MDL's STACK counts too, and leaving it out was a real hole in
      * the wrong direction: it rejected legitimate calls rather than
@@ -315,7 +327,13 @@ static bool module_claimed(int pin)
     if (pin < 0 || pin >= 32) {
         return false;
     }
-    return (g_mdl_slot.gpio_claimed & (1u << (unsigned)pin)) != 0u;
+    /* Did the CALLER claim it [S0] -- not "did anyone". The other reader
+     * of gpio_claimed, host_gpio_yielded_to_module(), deliberately stays
+     * on the slot table: it answers a HOST question (may the indicator
+     * task still drive this LED) asked from a context that has no caller
+     * at all. Two similar-looking tests, two different questions. */
+    module_t *m = mdl_caller_slot();
+    return (m != NULL) && ((m->gpio_claimed & (1u << (unsigned)pin)) != 0u);
 }
 
 /*
@@ -569,14 +587,19 @@ void host_delay_ms(uint32_t ms)
      * and without this the watchdog would kill anything that sleeps for
      * longer than its timeout -- which is most resident MDLs. */
     BaseType_t was_priv = xPortRaisePrivilege();
-    g_mdl_slot.parked_until_tick = (uint32_t)xTaskGetTickCount() + ms + 1u;
+    module_t *parked = mdl_caller_slot();
+    if (parked != NULL) {
+        parked->parked_until_tick = (uint32_t)xTaskGetTickCount() + ms + 1u;
+    }
     vPortResetPrivilege(was_priv);
 
     /* vTaskDelay() blocks; no reason to hold privilege across it. */
     vTaskDelay(pdMS_TO_TICKS(ms));
 
     was_priv = xPortRaisePrivilege();
-    g_mdl_slot.parked_until_tick = 0;
+    if (parked != NULL) {
+        parked->parked_until_tick = 0;
+    }
     feed_watchdog(); /* came back from the wait -- that IS progress */
     vPortResetPrivilege(was_priv);
 }
@@ -665,8 +688,20 @@ static void host_free_impl(void *p)
      * own free list, contained entirely within its own pool, never past
      * it (the pool's MPU region bounds that regardless of what this
      * allocator's bookkeeping does internally). */
+    /* Against the CALLER's heap [S0].
+     *
+     * NOTE FOR S1: the allocator STATE above (g_free_list, g_pool_next,
+     * g_pool_end) is still module-level static, i.e. one allocator for one
+     * module. That is correct while there is one slot and WRONG the moment
+     * there are two -- they would share a free list across separate arenas.
+     * Fixing the bound here does not fix that; per-slot allocator state is
+     * part of S1's multi-slot arena work, recorded rather than half-done. */
+    module_t *owner = mdl_caller_slot();
+    if (owner == NULL) {
+        return;
+    }
     if (!ptr_in_range((uintptr_t)p, sizeof(free_block_t),
-                       g_mdl_slot.heap_stack_lo, g_mdl_slot.heap_stack_lo + MDL_HEAP_SIZE)) {
+                       owner->heap_stack_lo, owner->heap_stack_lo + MDL_HEAP_SIZE)) {
         return;
     }
     free_block_t *b = (free_block_t *)p;

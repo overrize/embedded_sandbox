@@ -256,18 +256,8 @@ int host_spi_describe(int index, int *instance, uint32_t *hz, int *mode)
 
 static spi_bus_t *checked_spi(int instance)
 {
-    if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
-        return NULL;
-    }
-    bool declared = false;
-    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_SPI &&
-            g_mdl_slot.res[i].id == (uint8_t)instance) {
-            declared = true;
-            break;
-        }
-    }
-    if (!declared) {
+    /* Asks the CALLER's declarations, not "the" module's [S0]. */
+    if (!mdl_caller_declared((uint8_t)MDL_RES_KIND_SPI, (uint8_t)instance)) {
         return NULL;
     }
     spi_bus_t *b = spi_lookup(instance);

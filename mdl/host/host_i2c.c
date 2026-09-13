@@ -48,10 +48,31 @@
 #define I2C_CLKCTRL_100K   0x80504C4Eu
 #define I2C_CLKCTRL_APB1_HZ 144000000u
 
-/* Long enough for a slow device to stretch the clock through a page write,
- * short enough that a missing device is reported rather than waited on.
- * Milliseconds, per the vendor API. */
-#define I2C_TIMEOUT_MS 100u
+/*
+ * A SPIN COUNT, not milliseconds.
+ *
+ * The vendor's i2c_wait_flag()/i2c_wait_end() use this parameter as a raw
+ * `if ((timeout--) == 0)` loop counter. It carries no time unit at all, and
+ * the vendor example passes 0xFFFFFFF.
+ *
+ * This was `I2C_TIMEOUT_SPINS 100u`, with a comment asserting milliseconds
+ * 'per the vendor API'. At 288MHz, 100 iterations is well under a
+ * microsecond, while one byte at 100kHz takes about 90us -- so EVERY
+ * transfer aborted before the bus could do anything. The bus had been
+ * configured correctly the whole time: a scan of 112 addresses returned
+ * 112 timeouts and ZERO NACKs, which is the signature of a transfer that
+ * never starts rather than of an empty bus.
+ *
+ * The lesson is narrower than 'read the docs'. I gave a unitless parameter
+ * a unit by naming it, and from then on the name was the only evidence for
+ * the claim -- including to me, rereading my own code.
+ *
+ * 2,000,000 is roughly 100ms at 288MHz: an order of magnitude, not a
+ * guarantee, since the loop body is a couple of register reads. Each wait
+ * inside one transfer gets the full count, so a worst case is a few times
+ * this.
+ */
+#define I2C_TIMEOUT_SPINS 2000000u
 
 /* Biggest single transfer. Bounded because the buffer has to be validated
  * as lying inside the MDL's own memory, and an unbounded length would make
@@ -196,22 +217,36 @@ void host_i2c_release(int instance)
  */
 static i2c_bus_t *checked_bus(int instance)
 {
-    if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
-        return NULL;
-    }
-    bool declared = false;
-    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_I2C &&
-            g_mdl_slot.res[i].id == (uint8_t)instance) {
-            declared = true;
-            break;
-        }
-    }
-    if (!declared) {
+    /* Asks the CALLER's declarations, not "the" module's [S0]. */
+    if (!mdl_caller_declared((uint8_t)MDL_RES_KIND_I2C, (uint8_t)instance)) {
         return NULL;
     }
     i2c_bus_t *b = bus_lookup(instance);
     return (b != NULL && b->open) ? b : NULL;
+}
+
+/*
+ * Put the peripheral back to a known state after a failed transfer.
+ *
+ * WHY THIS IS NOT OPTIONAL. Found by scanning: sweeping 112 addresses with
+ * nothing but one device on the bus produced a 'device found' at an address
+ * that CHANGED between runs -- 0x68, then 0x60, then 0x60. A real device
+ * answers at one address every time, so that was state from the 111 failed
+ * probes bleeding into the next one and eventually being read as success.
+ *
+ * The vendor library does clear ACKFAIL and report the error, so the return
+ * code was right each time; what it does not do is guarantee the bus is
+ * idle afterwards. A scan is an unusually harsh way to expose that, but an
+ * application hits the same thing more quietly: one NACK from an absent
+ * sensor, and the NEXT transfer to a device that IS there returns garbage.
+ * That is the kind of fault that gets called intermittent for a week.
+ *
+ * Only on the error path, so a healthy bus pays nothing.
+ */
+static void bus_recover(i2c_bus_t *b)
+{
+    i2c_reset(b->periph);
+    i2c_config(b->handle);   /* reset clears everything, so reconfigure */
 }
 
 static int status_to_ret(i2c_status_type st)
@@ -245,9 +280,13 @@ int host_i2c_write_impl(int bus, int addr7, const void *data, uint32_t len)
     }
     /* The vendor API takes a left-aligned address; MDLs pass the 7-bit
      * address everyone reads off a datasheet. */
-    return status_to_ret(i2c_master_transmit(b->handle, (uint16_t)(addr7 << 1),
+    i2c_status_type st = i2c_master_transmit(b->handle, (uint16_t)(addr7 << 1),
                                               (uint8_t *)data, (uint16_t)len,
-                                              I2C_TIMEOUT_MS));
+                                              I2C_TIMEOUT_SPINS);
+    if (st != I2C_OK) {
+        bus_recover(b);
+    }
+    return status_to_ret(st);
 }
 
 int host_i2c_read_impl(int bus, int addr7, void *data, uint32_t len)
@@ -262,9 +301,13 @@ int host_i2c_read_impl(int bus, int addr7, void *data, uint32_t len)
     if (!host_ptr_owned_by_module(data, len)) {
         return -1;
     }
-    return status_to_ret(i2c_master_receive(b->handle, (uint16_t)(addr7 << 1),
+    i2c_status_type st = i2c_master_receive(b->handle, (uint16_t)(addr7 << 1),
                                              (uint8_t *)data, (uint16_t)len,
-                                             I2C_TIMEOUT_MS));
+                                             I2C_TIMEOUT_SPINS);
+    if (st != I2C_OK) {
+        bus_recover(b);
+    }
+    return status_to_ret(st);
 }
 
 /*
@@ -296,11 +339,15 @@ int host_i2c_write_read_impl(int bus, int addr7, const void *tx, uint32_t txlen,
 
     i2c_status_type st = i2c_master_transmit(b->handle, (uint16_t)(addr7 << 1),
                                               (uint8_t *)tx, (uint16_t)txlen,
-                                              I2C_TIMEOUT_MS);
+                                              I2C_TIMEOUT_SPINS);
     if (st != I2C_OK) {
+        bus_recover(b);
         return status_to_ret(st);
     }
-    return status_to_ret(i2c_master_receive(b->handle, (uint16_t)(addr7 << 1),
-                                             (uint8_t *)rx, (uint16_t)rxlen,
-                                             I2C_TIMEOUT_MS));
+    st = i2c_master_receive(b->handle, (uint16_t)(addr7 << 1),
+                             (uint8_t *)rx, (uint16_t)rxlen, I2C_TIMEOUT_SPINS);
+    if (st != I2C_OK) {
+        bus_recover(b);
+    }
+    return status_to_ret(st);
 }

@@ -2,12 +2,19 @@
  * Drives I2C1 from inside the sandbox [ABI v7].
  *
  * `i2cscan` walks the 7-bit address space and reports which addresses
- * answer. That doubles as the test for the driver itself, because the
- * interesting case is the one with nothing plugged in: every address must
- * come back -2 ("nothing answered"), promptly and identically. A driver
- * that hangs on an absent device, or that reports success for a bus with
- * no pull-ups, would show up here immediately -- and "no device attached"
- * is the normal state in the field, not an exceptional one.
+ * answer. It doubles as a test of the driver, because 112 back-to-back
+ * probes with at most one device present is a harsh way to run a bus:
+ * almost every transfer NACKs, so any state left behind by a failed one
+ * lands on the next.
+ *
+ * That is not hypothetical -- it is how host_i2c.c's bus_recover() was
+ * found. Before it existed this scan reported a device at an address that
+ * MOVED between runs (0x68, then 0x60, then 0x60), which is the signature
+ * of leftover state rather than of hardware: a real device answers at one
+ * address every time.
+ *
+ * On this board the answer should be the AT24C64 EEPROM (U8 in the
+ * schematic) somewhere in 0x50..0x57, depending on its A0/A1/A2 pins.
  *
  * With a device attached, its address appears in the list, and `i2crd
  * <addr> <reg>` reads one register from it.
@@ -86,9 +93,11 @@ int module_cmd(const host_api_t *host, int argc, const char *const *argv)
     /* 0x08..0x77: the addresses actually usable by devices. The ones below
      * and above are reserved by the I2C specification, and probing them
      * would be noise rather than information. */
-    int refused = 0;
+    int refused = 0, nack = 0, noresp = 0;
     for (int addr = 0x08; addr <= 0x77; addr++) {
         int r = host->i2c_read(1, addr, &probe, 1);
+        if (r == -3) { nack++; }
+        if (r == -2) { noresp++; }
         if (r == 0) {
             w = g_line;
             w = put_str(w, end, "  device at ");
@@ -105,6 +114,28 @@ int module_cmd(const host_api_t *host, int argc, const char *const *argv)
         }
     }
 
+    /* WHICH KIND of silence, not just that it was silent.
+     *
+     * -3 is ACKFAIL: the bus clocked an address out and nobody pulled SDA
+     * down. That means the peripheral, the mux and the pull-ups all work,
+     * and there is simply no device at that address.
+     *
+     * -2 is a timeout or an early-step failure: the transfer never got far
+     * enough to hear an answer, which points at the peripheral or the pin
+     * routing rather than at the bus being empty.
+     *
+     * Collapsing both into "no device" is what made an empty bus and a
+     * misrouted one look identical -- the same mistake that hid I2C1 being
+     * on the wrong pins for three rounds. */
+    w = g_line;
+    w = put_str(w, end, "  no-answer breakdown: ");
+    w = put_u32(w, end, (uint32_t)nack);
+    w = put_str(w, end, " NACK (bus works, nobody home) / ");
+    w = put_u32(w, end, (uint32_t)noresp);
+    w = put_str(w, end, " timeout (peripheral or routing)");
+    *w = 0;
+    host->log(g_line);
+
     w = g_line;
     if (refused > 0) {
         w = put_str(w, end, "  REFUSED by the host -- is MDL_RES_I2C(1) declared, "
@@ -112,8 +143,8 @@ int module_cmd(const host_api_t *host, int argc, const char *const *argv)
     } else {
         w = put_str(w, end, "  found ");
         w = put_u32(w, end, (uint32_t)g_found);
-        w = put_str(w, end, " device(s). None is the expected answer with "
-                             "nothing wired to PB6/PB7.");
+        w = put_str(w, end, " device(s) on PB8/PB9. The board carries an "
+                             "AT24C64 EEPROM (U8) at 0x50..0x57.");
     }
     *w = 0;
     host->log(g_line);

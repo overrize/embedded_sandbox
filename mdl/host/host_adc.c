@@ -232,18 +232,8 @@ void host_adc_release(int channel)
 
 static adc_ch_t *checked_chan(int channel)
 {
-    if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
-        return NULL;
-    }
-    bool declared = false;
-    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_ADC &&
-            g_mdl_slot.res[i].id == (uint8_t)channel) {
-            declared = true;
-            break;
-        }
-    }
-    if (!declared) {
+    /* Asks the CALLER's declarations, not "the" module's [S0]. */
+    if (!mdl_caller_declared((uint8_t)MDL_RES_KIND_ADC, (uint8_t)channel)) {
         return NULL;
     }
     adc_ch_t *c = chan_lookup(channel);

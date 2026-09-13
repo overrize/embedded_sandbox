@@ -316,6 +316,36 @@ int mdl_post_module_command(module_t *m, int argc, const char *const *argv)
     return mdl_events_post_console() ? 1 : 0;
 }
 
+module_t *mdl_caller_slot(void)
+{
+    TaskHandle_t me = xTaskGetCurrentTaskHandle();
+
+    /* One slot today, so this is a single comparison. It is written as a
+     * lookup rather than as `return &g_mdl_slot` precisely so that the
+     * shape is already right when there are several -- the callers do not
+     * change again when that happens. */
+    if (g_mdl_slot.state != MDL_SLOT_EMPTY &&
+        g_mdl_slot.task_handle != NULL &&
+        (TaskHandle_t)g_mdl_slot.task_handle == me) {
+        return &g_mdl_slot;
+    }
+    return NULL;
+}
+
+bool mdl_caller_declared(uint8_t kind, uint8_t id)
+{
+    module_t *m = mdl_caller_slot();
+    if (m == NULL) {
+        return false;
+    }
+    for (uint8_t i = 0; i < m->res_count; i++) {
+        if (m->res[i].kind == kind && m->res[i].id == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int mdl_start_module_task(module_t *m, const struct host_api *host)
 {
     TaskParameters_t task_def = { 0 };
