@@ -162,6 +162,16 @@ typedef enum {
     MDL_RES_KIND_I2C   = 2, /* id = instance, e.g. 1 for I2C1  */
     MDL_RES_KIND_UART  = 3, /* id = instance, e.g. 2 for USART2 */
     MDL_RES_KIND_TIMER = 4, /* id = instance, e.g. 3 for TMR3   */
+    /* id = CHANNEL, not instance: an ADC is one peripheral with many
+     * channels. The host expands a channel to its pin, so ADC(4) and a
+     * GPIO claim on PA4 collide by pin, which is the point of R3. */
+    MDL_RES_KIND_ADC   = 5,
+
+    /* Not a kind: the bound the loader validates against. Kept here so
+     * adding a kind is one edit rather than three -- the first version of
+     * ADC was rejected at load because loader.c still compared against
+     * KIND_TIMER, and nothing in the build could have caught that. */
+    MDL_RES_KIND_MAX   = 5,
 } mdl_res_kind_t;
 
 /*

@@ -57,6 +57,28 @@ MDL_PERIPH(UART,  3, "USART3 (PB10 TX, PB11 RX)",
 MDL_PERIPH(TIMER, 3, "TMR3 (PA6 CH1, PA7 CH2, PB0 CH3, PB1 CH4)",
            P(0, 6), P(0, 7), P(1, 0), P(1, 1))
 
+/* ADC1 channels. The id is a CHANNEL, so each entry occupies one pin.
+ *
+ * PA4/PA5 -> CH4/CH5 are confirmed against the vendor's
+ * use_polling_get_conversion_data example, which establishes the
+ * PA(n) -> CH(n) pattern across PA0..PA7. PC0..PC5 -> CH10..CH15 is from
+ * the datasheet pin table and is NOT example-confirmed -- same caveat as
+ * TMR3's CH3/CH4 below.
+ *
+ * Channels 2/3 and 6..9 are deliberately absent: their pins already
+ * belong to USART2 and TMR3 in this very table, and offering them would
+ * be shipping a guaranteed conflict. */
+MDL_PERIPH(ADC,   0, "ADC1 CH0 (PA0)",  P(0, 0),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,   1, "ADC1 CH1 (PA1)",  P(0, 1),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,   4, "ADC1 CH4 (PA4)",  P(0, 4),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,   5, "ADC1 CH5 (PA5)",  P(0, 5),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,  10, "ADC1 CH10 (PC0)", P(2, 0),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,  11, "ADC1 CH11 (PC1)", P(2, 1),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,  12, "ADC1 CH12 (PC2)", P(2, 2),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,  13, "ADC1 CH13 (PC3)", P(2, 3),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,  14, "ADC1 CH14 (PC4)", P(2, 4),  NONE, NONE, NONE)
+MDL_PERIPH(ADC,  15, "ADC1 CH15 (PC5)", P(2, 5),  NONE, NONE, NONE)
+
 /* ---- physical pins the host holds ------------------------------------ */
 /* MDL_PIN_OWNER(pin, HARD|YIELDS, who)
  *

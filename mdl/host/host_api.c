@@ -843,6 +843,29 @@ int host_uart_read(int bus, void *data, uint32_t maxlen)
     return r;
 }
 
+extern int host_adc_read_impl(int channel);
+extern int host_adc_read_mv_impl(int channel);
+
+int host_adc_read(int channel) MDL_SYSCALL_GATE;
+int host_adc_read(int channel)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_adc_read_impl(channel);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
+int host_adc_read_mv(int channel) MDL_SYSCALL_GATE;
+int host_adc_read_mv(int channel)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_adc_read_mv_impl(channel);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
 const host_api_t g_host_api = {
     .abi_ver   = HOST_API_ABI_VERSION,
     .log       = host_log,
@@ -862,6 +885,8 @@ const host_api_t g_host_api = {
     .uart_write     = host_uart_write,
     .uart_read      = host_uart_read,
     .uart_loopback  = host_uart_loopback,
+    .adc_read       = host_adc_read,
+    .adc_read_mv    = host_adc_read_mv,
 };
 
 void host_api_init(void)

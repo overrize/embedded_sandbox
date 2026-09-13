@@ -282,3 +282,36 @@ __attribute__((weak)) void mdl_events_post_uart(uint8_t instance, uint16_t waiti
 {
     (void)instance; (void)waiting;
 }
+
+/* Weak ADC, for a target with no analog front end linked in. -2 rather
+ * than 0 on read: 0 counts is a valid measurement of a grounded pin, so
+ * a build with no driver must not be able to masquerade as one. */
+__attribute__((weak)) bool host_adc_claim(int channel)
+{
+    (void)channel;
+    return false;
+}
+
+__attribute__((weak)) void host_adc_release(int channel)
+{
+    (void)channel;
+}
+
+__attribute__((weak)) int host_adc_read_impl(int channel)
+{
+    (void)channel;
+    return -1;
+}
+
+__attribute__((weak)) int host_adc_read_mv_impl(int channel)
+{
+    (void)channel;
+    return -1;
+}
+
+__attribute__((weak)) int host_adc_describe(int index, int *channel, char *port,
+                                             int *pin, bool *confirmed)
+{
+    (void)index; (void)channel; (void)port; (void)pin; (void)confirmed;
+    return -1;
+}

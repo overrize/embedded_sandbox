@@ -95,7 +95,7 @@ class PackError(Exception):
 # locally wrong about.
 BOARD_PINS_DEF = MDL_ROOT / "host" / "board_pins.def"
 
-RES_KIND = {"GPIO": 1, "I2C": 2, "UART": 3, "TIMER": 4}
+RES_KIND = {"GPIO": 1, "I2C": 2, "UART": 3, "TIMER": 4, "ADC": 5}
 
 
 def _pin(port, num):

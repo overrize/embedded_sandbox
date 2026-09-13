@@ -46,7 +46,11 @@
  * distinction is forward-looking).
  */
 
-/* v8 (2026-09-08): uart_config/write/read. Unlike I2C, a UART is a
+/* v9 (2026-09-13): adc_read / adc_read_mv. The resource id is a channel
+ * rather than an instance, so one firmware offers every channel and
+ * nobody has to guess which pin a board brings out.
+ *
+ * v8 (2026-09-08): uart_config/write/read. Unlike I2C, a UART is a
  * stream: data arrives whether or not anyone is reading, so the host
  * buffers it and MDL_EVT_UART says when there is some.
  *
@@ -76,7 +80,7 @@
  * v2 (2026-09-07): added atoi() to the vtable, and the two declaration
  * macros below -- console commands and hardware claims. Append-only:
  * every v1 entry keeps its slot and its meaning. */
-#define HOST_API_ABI_VERSION 8
+#define HOST_API_ABI_VERSION 9
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -177,6 +181,11 @@
 #define MDL_RES_I2C(n)   { MDL_RES_KIND_I2C,   (uint8_t)(n), 0, 0 }
 #define MDL_RES_UART(n)  { MDL_RES_KIND_UART,  (uint8_t)(n), 0, 0 }
 #define MDL_RES_TIMER(n) { MDL_RES_KIND_TIMER, (uint8_t)(n), 0, 0 }
+
+/* ADC takes a CHANNEL, not an instance -- MDL_RES_ADC(4) is PA4. Run the
+ * `adc` console command to see which channels this board offers and
+ * which pin each one is. */
+#define MDL_RES_ADC(ch)  { MDL_RES_KIND_ADC,   (uint8_t)(ch), 0, 0 }
 
 #define MDL_MODULE_RESOURCES(...) \
     __attribute__((used, section(".mdl_resources"))) \
@@ -442,6 +451,34 @@ typedef struct host_api {
      * works without another device on the wire -- not a mode to talk to
      * anything real in, since every byte sent comes back. */
     int (*uart_loopback)(int bus, int enable);
+
+    /*
+     * ADC [ABI v9]. channel is an ADC channel number, which is also what
+     * MDL_RES_ADC(channel) declares -- so adc_read(4) reads PA4. Run the
+     * `adc` console command for this board's channel-to-pin table.
+     *
+     * These block for the duration of one conversion, which is
+     * microseconds, so there is no parking or watchdog subtlety here the
+     * way there is for I2C.
+     *
+     * Returns, for both:
+     *   >= 0  the reading
+     *   -1    refused -- channel not declared, or not a channel this
+     *         board offers
+     *   -2    the conversion never completed, i.e. the peripheral is not
+     *         running. Deliberately NOT the same as reading 0, which is a
+     *         perfectly good measurement of a grounded pin.
+     */
+
+    /* Raw counts, 0..4095 at 12-bit resolution. */
+    int (*adc_read)(int channel);
+
+    /* Millivolts, computed against the chip's internal 1.2V reference
+     * rather than an assumed 3.3V rail -- VDDA divides out, so a board
+     * running 3.28V does not quietly shift every reading by 0.6%. Costs
+     * a second conversion, so prefer adc_read() in a tight loop and
+     * this when the number is going to be believed. */
+    int (*adc_read_mv)(int channel);
 } host_api_t;
 
 /*
@@ -512,6 +549,15 @@ bool host_uart_claim(int instance);
 void host_uart_release(int instance);
 /* Bytes lost because the MDL did not read fast enough, for `status`. */
 uint32_t host_uart_dropped(int instance);
+
+/* Bring up / tear down one ADC channel an MDL claimed. */
+bool host_adc_claim(int channel);
+void host_adc_release(int channel);
+
+/* Enumerate what this board offers, for the `adc` console command:
+ * returns the total count, or -1 once index runs past the end. */
+int host_adc_describe(int index, int *channel, char *port, int *pin,
+                       bool *confirmed);
 
 bool host_gpio_pin_id(int pin, uint8_t *out);
 

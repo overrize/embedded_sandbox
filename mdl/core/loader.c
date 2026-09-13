@@ -90,7 +90,7 @@ static mdl_load_status_t check_resources(const mdl_res_t *res,
 
     for (uint32_t i = 0; i < count; i++) {
         if (res[i].kind == (uint8_t)MDL_RES_KIND_NONE ||
-            res[i].kind > (uint8_t)MDL_RES_KIND_TIMER) {
+            res[i].kind > (uint8_t)MDL_RES_KIND_MAX) {
             return MDL_LOAD_ERR_BAD_RES;
         }
         /* 32 because gpio_claimed is a uint32_t bitmap; the host

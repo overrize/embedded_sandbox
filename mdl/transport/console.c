@@ -223,6 +223,7 @@ static void cmd_help(void)
         "  clk               system_core_clock, as configured\r\n"
         "  arena             arena region addresses\r\n"
         "  pins              gpio pins, and who owns each one\r\n"
+        "  adc               adc channels, and which pin each one is\r\n"
         "  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)\r\n"
         "  btn <i>           read whitelisted input pin i\r\n"
         "  mem <addr> [n]    dump n words (default 8) from addr\r\n"
@@ -448,6 +449,45 @@ static void cmd_arena(void)
     mdl_console_puts("  (no access, any privilege)\r\n");
 }
 
+/*
+ * Where do I connect?
+ *
+ * This exists so that question can be answered from a terminal, before
+ * anyone writes an MDL. The alternative is reading board_pins.def and
+ * trusting that the firmware on the device matches it, which is exactly
+ * the assumption that cost three rounds on USART2's RX pin.
+ */
+static void cmd_adc(void)
+{
+    int ch, pin;
+    char port;
+    bool confirmed;
+
+    if (host_adc_describe(0, &ch, &port, &pin, &confirmed) < 0) {
+        mdl_console_puts("no ADC channels in this build\r\n");
+        return;
+    }
+
+    mdl_console_puts("ADC1 channels this board offers:\r\n");
+    for (int i = 0; host_adc_describe(i, &ch, &port, &pin, &confirmed) >= 0; i++) {
+        mdl_console_puts("  MDL_RES_ADC(");
+        put_u32((uint32_t)ch);
+        mdl_console_puts(")  ->  P");
+        {
+            char pstr[2];
+            pstr[0] = port;
+            pstr[1] = 0;
+            mdl_console_puts(pstr);
+        }
+        put_u32((uint32_t)pin);
+        if (!confirmed) {
+            mdl_console_puts("   [pin mapping from the datasheet, not an example]");
+        }
+        mdl_console_puts("\r\n");
+    }
+    mdl_console_puts("declare one with MDL_MODULE_RESOURCES(MDL_RES_ADC(n)), then host->adc_read(n)\r\n");
+}
+
 static void cmd_pins(void)
 {
     for (int i = 0; ; i++) {
@@ -563,6 +603,7 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "clk")    == 0) cmd_clk();
     else if (strcmp(argv[0], "arena")  == 0) cmd_arena();
     else if (strcmp(argv[0], "pins")   == 0) cmd_pins();
+    else if (strcmp(argv[0], "adc")    == 0) cmd_adc();
     else if (strcmp(argv[0], "led")    == 0) cmd_led(argc, argv);
     else if (strcmp(argv[0], "btn")    == 0) cmd_btn(argc, argv);
     else if (strcmp(argv[0], "mem")    == 0) cmd_mem(argc, argv);

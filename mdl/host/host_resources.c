@@ -174,6 +174,7 @@ static const char *kind_name(uint8_t kind)
     case MDL_RES_KIND_I2C:   return "i2c";
     case MDL_RES_KIND_UART:  return "uart";
     case MDL_RES_KIND_TIMER: return "timer";
+    case MDL_RES_KIND_ADC:   return "adc";
     default:                  return "unknown";
     }
 }
