@@ -227,6 +227,7 @@ static void cmd_help(void)
         "  adc               adc channels, and which pin each one is\r\n"
         "  spi               spi buses, their pins and current settings\r\n"
         "  buddy             arena allocator: free space and self-test\r\n"
+        "  evt <pin> [n]   fire a pin's interrupt from software (no button needed)\r\n"
         "  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)\r\n"
         "  btn <i>           read whitelisted input pin i\r\n"
         "  mem <addr> [n]    dump n words (default 8) from addr\r\n"
@@ -480,6 +481,48 @@ static void cmd_arena(void)
  * configuration. Same rule as everywhere else here -- compiling is not
  * finishing.
  */
+/*
+ * `evt <pin> [n]` -- fire a pin's interrupt n times, from software.
+ *
+ * This is how the event path gets tested now. The previous answer was
+ * 'press SW3', which needs a person and therefore cannot repeat, cannot
+ * run unattended, and cannot distinguish a broken path from an unpressed
+ * button.
+ *
+ * It is also the only way to test PER-SLOT ROUTING at all: fire the pin one
+ * module declared and check that the OTHER module saw nothing. No amount of
+ * pressing proves that.
+ */
+static void cmd_evt(int argc, char **argv)
+{
+    if (argc < 2) {
+        mdl_console_puts("usage: evt <whitelist pin> [count]\r\n");
+        return;
+    }
+    uint32_t pinv = 0, nv = 1;
+    if (!parse_u32(argv[1], &pinv)) {
+        mdl_console_puts("pin must be a number\r\n");
+        return;
+    }
+    if (argc >= 3 && !parse_u32(argv[2], &nv)) {
+        nv = 1;
+    }
+    int pin = (int)pinv;
+    int n   = (nv < 1u) ? 1 : ((nv > 1000u) ? 1000 : (int)nv);
+
+    for (int i = 0; i < n; i++) {
+        if (!host_gpio_trigger_exint(pin)) {
+            mdl_console_puts("that pin has no external interrupt on this board\r\n");
+            return;
+        }
+    }
+    mdl_console_puts("fired ");
+    put_u32((uint32_t)n);
+    mdl_console_puts(" interrupt(s) on pin ");
+    put_u32((uint32_t)pin);
+    mdl_console_puts("\r\n");
+}
+
 static void cmd_buddy(void)
 {
     char detail[96];
@@ -674,6 +717,7 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "adc")    == 0) cmd_adc();
     else if (strcmp(argv[0], "spi")    == 0) cmd_spi();
     else if (strcmp(argv[0], "buddy")  == 0) cmd_buddy();
+    else if (strcmp(argv[0], "evt")    == 0) cmd_evt(argc, argv);
     else if (strcmp(argv[0], "led")    == 0) cmd_led(argc, argv);
     else if (strcmp(argv[0], "btn")    == 0) cmd_btn(argc, argv);
     else if (strcmp(argv[0], "mem")    == 0) cmd_mem(argc, argv);

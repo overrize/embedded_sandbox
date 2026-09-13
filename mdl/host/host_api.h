@@ -589,6 +589,12 @@ void host_uart_release(int instance);
 uint32_t host_uart_dropped(int instance);
 
 /* Bring up / tear down one ADC channel an MDL claimed. */
+/* Raise a whitelisted pin's EXINT from software, so the interrupt path can
+ * be tested without a finger. Host-only and deliberately not in the vtable
+ * -- a module that could forge its own events could fake anything built on
+ * them. */
+bool host_gpio_trigger_exint(int pin);
+
 bool host_adc_claim(int channel);
 void host_adc_release(int channel);
 

@@ -295,6 +295,35 @@ bool host_gpio_exti_info(int pin, uint8_t *port_source, uint8_t *pin_source,
     return true;
 }
 
+/*
+ * Raise a pin's external interrupt from software.
+ *
+ * FOR TESTING, and it exists because the alternative was asking a person
+ * to press a button. That is not a test: it cannot repeat, cannot run
+ * unattended, and a null result cannot be told apart from nobody pressing
+ * -- the exact ambiguity that cost a round on USART2's receive path.
+ *
+ * What it exercises is the whole chain the hardware edge would: the same
+ * EXINT line, the same vector, the same ISR, the same queue, the same task
+ * wake. The only thing it does not prove is that the pad is connected,
+ * which is what the button already proved once.
+ *
+ * Host-only: there is no vtable entry for it. A module able to forge its
+ * own interrupts could fake its way past anything built on top of them.
+ */
+bool host_gpio_trigger_exint(int pin)
+{
+    uint8_t  port_source, pin_source;
+    uint32_t line;
+    int      irqn;
+
+    if (!host_gpio_exti_info(pin, &port_source, &pin_source, &line, &irqn)) {
+        return false;
+    }
+    exint_software_interrupt_event_generate(line);
+    return true;
+}
+
 /* The physical pin behind a whitelist index, for host_resources.c's
  * pin-level comparison. False for an index that is not whitelisted. */
 bool host_gpio_pin_id(int pin, uint8_t *out)

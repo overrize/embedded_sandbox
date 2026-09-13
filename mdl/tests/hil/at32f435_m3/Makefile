@@ -72,6 +72,7 @@ C_SRCS := \
   $(MDL)/arch/arm_cm4/ctxsw_arm.c \
   $(MDL)/host/host_api.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_gpio.c \
+  $(VENDOR)/libraries/drivers/src/at32f435_437_exint.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_crm.c \
   $(VENDOR)/libraries/cmsis/cm4/device_support/system_at32f435_437.c \
   $(FRSRC)/tasks.c \
