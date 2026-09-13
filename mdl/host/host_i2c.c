@@ -58,7 +58,7 @@
  * that check meaningless. */
 #define I2C_MAX_LEN 256u
 
-/* Only I2C1 is wired up on this board (PB6/PB7, see board_pins.def). The
+/* Only I2C1 is wired up on this board (PB8/PB9, see board_pins.def). The
  * table is indexed by instance number so adding I2C2 is a row, not a
  * restructure. */
 static i2c_handle_type s_hi2c1;
@@ -76,7 +76,7 @@ typedef struct {
 
 static i2c_bus_t g_buses[] = {
     { 1, I2C1, &s_hi2c1, CRM_I2C1_PERIPH_CLOCK, GPIOB,
-      GPIO_PINS_6, GPIO_PINS_7, GPIO_PINS_SOURCE6, GPIO_PINS_SOURCE7, false },
+      GPIO_PINS_8, GPIO_PINS_9, GPIO_PINS_SOURCE8, GPIO_PINS_SOURCE9, false },
 };
 #define BUS_COUNT (sizeof(g_buses) / sizeof(g_buses[0]))
 
@@ -120,8 +120,15 @@ void i2c_lowlevel_init(i2c_handle_type *hi2c)
     gpio_init_struct.gpio_pins           = b->scl_pin | b->sda_pin;
     gpio_init(b->port, &gpio_init_struct);
 
-    /* GPIO_MUX_4 is I2C1 on port B for this part -- from the vendor's
-     * i2c/communication_int example, not from memory. */
+    /* GPIO_MUX_4 is I2C1 on port B, from the vendor's i2c example (which
+     * uses PB6/PB7; the MUX is the same across the port's I2C1 pins).
+     *
+     * PB8/PB9 rather than PB6/PB7 because that is where THIS board routes
+     * I2C1 -- and, decisively, where its 10k pull-ups are. PB6/PB7 here go
+     * to the camera connector with no pull-ups, so the earlier version
+     * drove a bus that could never have worked, and scanned clean anyway
+     * because an empty bus and the wrong bus are indistinguishable with
+     * nothing attached. */
     gpio_pin_mux_config(b->port, b->scl_source, GPIO_MUX_4);
     gpio_pin_mux_config(b->port, b->sda_source, GPIO_MUX_4);
 

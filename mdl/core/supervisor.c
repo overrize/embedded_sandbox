@@ -122,6 +122,9 @@ static void reclaim_module(void)
         if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_ADC) {
             host_adc_release((int)g_mdl_slot.res[i].id);
         }
+        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_SPI) {
+            host_spi_release((int)g_mdl_slot.res[i].id);
+        }
     }
 
     uint32_t restored = host_gpio_release_claims(g_mdl_slot.gpio_claimed);
@@ -221,6 +224,11 @@ static bool start_loaded_module(void)
         if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_ADC) {
             if (!host_adc_claim((int)g_mdl_slot.res[i].id)) {
                 mdl_console_puts("[host] adc channel could not be claimed\r\n");
+            }
+        }
+        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_SPI) {
+            if (!host_spi_claim((int)g_mdl_slot.res[i].id)) {
+                mdl_console_puts("[host] spi could not be initialised\r\n");
             }
         }
     }

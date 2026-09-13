@@ -74,6 +74,18 @@ static uart_bus_t g_uarts[] = {
       GPIO_MUX_7, CRM_GPIOA_PERIPH_CLOCK,
       false, UART_DEFAULT_BAUD, { 0 }, 0, 0, 0 },
 
+    /* USART2 as this board actually wires it: PD5 TX / PD6 RX, both on
+     * header U5 (nets PD5_U2_TX / PD6_U2_RX). Instance 4 because 2 is taken
+     * by the chip-mapped PA2/PA3 variant, whose RX pin reaches no header.
+     *
+     * GPIO_MUX_7 matches the vendor's usart examples for USART2 and its
+     * hw_flow_control example drives PD3..PD6 with MUX_7, so this mapping is
+     * example-confirmed. Jumper PD5 to PD6 for a loopback. */
+    { 4, USART2, CRM_USART2_PERIPH_CLOCK, USART2_IRQn,
+      GPIOD, GPIO_PINS_5, GPIO_PINS_6, GPIO_PINS_SOURCE5, GPIO_PINS_SOURCE6,
+      GPIO_MUX_7, CRM_GPIOD_PERIPH_CLOCK,
+      false, UART_DEFAULT_BAUD, { 0 }, 0, 0, 0 },
+
     /* USART3 on PB10/PB11 -- the instance that exists to be TESTABLE.
      * Both pins are brought out and adjacent, so one jumper across them is
      * a true full-duplex loopback: no silicon quirk to rely on, no button,
@@ -128,16 +140,34 @@ static void uart_isr(uart_bus_t *u)
     }
 }
 
+/*
+ * Instances 2 and 4 are the SAME peripheral on different pins, so this one
+ * vector has to find whichever of them is open. Only one can be, because
+ * they share USART2 itself -- claiming both would mean two pin mappings
+ * driving one set of registers.
+ */
 void USART2_IRQHandler(void);
 void USART2_IRQHandler(void)
 {
-    uart_isr(&g_uarts[0]);
+    for (unsigned i = 0; i < UART_COUNT; i++) {
+        if (g_uarts[i].periph == USART2 && g_uarts[i].open) {
+            uart_isr(&g_uarts[i]);
+            return;
+        }
+    }
 }
 
 void USART3_IRQHandler(void);
 void USART3_IRQHandler(void)
 {
-    uart_isr(&g_uarts[1]);
+    /* By peripheral, not by index: the table has been reordered once
+     * already and a stale index here would deliver another bus's bytes. */
+    for (unsigned i = 0; i < UART_COUNT; i++) {
+        if (g_uarts[i].periph == USART3) {
+            uart_isr(&g_uarts[i]);
+            return;
+        }
+    }
 }
 
 /* ---- bring-up / tear-down -------------------------------------------- */
@@ -159,6 +189,17 @@ bool host_uart_claim(int instance)
     }
     if (u->open) {
         return true;
+    }
+
+    /* Refuse a second pin mapping for a peripheral that is already running:
+     * instances 2 and 4 are both USART2, and granting both would point two
+     * pin sets at one set of registers with no way to say which won. */
+    for (unsigned i = 0; i < UART_COUNT; i++) {
+        if (&g_uarts[i] != u && g_uarts[i].periph == u->periph && g_uarts[i].open) {
+            mdl_console_puts("[host] uart: that peripheral is already open on"
+                              " its other pin mapping\r\n");
+            return false;
+        }
     }
 
     crm_periph_clock_enable(u->gpio_clock, TRUE);

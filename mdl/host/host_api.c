@@ -118,6 +118,14 @@ typedef struct {
 } gpio_whitelist_entry_t;
 
 /*
+ * NOTE THE DUPLICATION, because it has already cost a cycle: this table
+ * and board_pins.def's MDL_GPIO_PIN list must agree, index for index.
+ * This one says how to DRIVE a pin (port, mask, clock, direction, EXINT
+ * wiring); that one says which physical pin an index IS, so claims can be
+ * compared against peripherals. Adding PE3 to only one of them produced
+ * "gpio instance not known on this board" from a module whose claim the
+ * arbitration layer had already accepted.
+ *
  * The UYUP-RPI-A-2.4 board's actual pins (schematic UYUP-RPI-A-2.4.pdf),
  * replacing the PA0/PA1 placeholder this table shipped with. A module
  * sees these as pin indices 0..3 and cannot reach anything else --
@@ -154,6 +162,12 @@ static const gpio_whitelist_entry_t g_gpio_whitelist[] = {
                       /* 3: BTN1 = SW4 (PE2) -- exint line 2, own vector */
     { GPIOA, GPIO_PINS_9,  CRM_GPIOA_PERIPH_CLOCK, false, false,
       0, 0, 0, -1, MDL_PIN(0, 9) },  /* 4: U1TX (PA9) -- listed to be refused */
+    /* 5: the onboard W25Q32's chip select (net PE3_FLASH_NCS). An output,
+     * and the reason an MDL can drive SPI's CS at all -- host_spi.c has no
+     * CS of its own on purpose, because per-device timing differs. Not on a
+     * header, and it does not need to be: it is already wired to the flash. */
+    { GPIOE, GPIO_PINS_3,  CRM_GPIOE_PERIPH_CLOCK, true,  true,
+      0, 0, 0, -1, MDL_PIN(4, 3) },
 };
 
 static const char *const g_gpio_names[] = {
@@ -162,6 +176,7 @@ static const char *const g_gpio_names[] = {
     "BTN0 (PA3,  SW3, in,  1=idle)",
     "BTN1 (PE2,  SW4, in,  1=idle)",
     "U1TX (PA9,  DAP debug UART -- never a module's to take)",
+    "FLASH_NCS (PE3, W25Q32 chip select, out, 1=idle)",
 };
 #define GPIO_WHITELIST_COUNT (sizeof(g_gpio_whitelist) / sizeof(g_gpio_whitelist[0]))
 
@@ -866,6 +881,29 @@ int host_adc_read_mv(int channel)
     return r;
 }
 
+extern int host_spi_config_impl(int bus, int mode, uint32_t hz);
+extern int host_spi_transfer_impl(int bus, const void *tx, void *rx, uint32_t len);
+
+int host_spi_config(int bus, int mode, uint32_t hz) MDL_SYSCALL_GATE;
+int host_spi_config(int bus, int mode, uint32_t hz)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_spi_config_impl(bus, mode, hz);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
+int host_spi_transfer(int bus, const void *tx, void *rx, uint32_t len) MDL_SYSCALL_GATE;
+int host_spi_transfer(int bus, const void *tx, void *rx, uint32_t len)
+{
+    BaseType_t was_priv = xPortRaisePrivilege();
+    int r = host_spi_transfer_impl(bus, tx, rx, len);
+    feed_watchdog();
+    vPortResetPrivilege(was_priv);
+    return r;
+}
+
 const host_api_t g_host_api = {
     .abi_ver   = HOST_API_ABI_VERSION,
     .log       = host_log,
@@ -887,6 +925,8 @@ const host_api_t g_host_api = {
     .uart_loopback  = host_uart_loopback,
     .adc_read       = host_adc_read,
     .adc_read_mv    = host_adc_read_mv,
+    .spi_config     = host_spi_config,
+    .spi_transfer   = host_spi_transfer,
 };
 
 void host_api_init(void)

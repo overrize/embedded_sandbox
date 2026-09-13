@@ -315,3 +315,37 @@ __attribute__((weak)) int host_adc_describe(int index, int *channel, char *port,
     (void)index; (void)channel; (void)port; (void)pin; (void)confirmed;
     return -1;
 }
+
+/* Weak SPI, for a target with no SPI driver linked in. -1 rather than 0
+ * for transfer: receiving 0x00 from a real bus is a valid result, so a
+ * build with no driver must not be able to look like one. */
+__attribute__((weak)) bool host_spi_claim(int instance)
+{
+    (void)instance;
+    return false;
+}
+
+__attribute__((weak)) void host_spi_release(int instance)
+{
+    (void)instance;
+}
+
+__attribute__((weak)) int host_spi_describe(int index, int *instance,
+                                             uint32_t *hz, int *mode)
+{
+    (void)index; (void)instance; (void)hz; (void)mode;
+    return -1;
+}
+
+__attribute__((weak)) int host_spi_config_impl(int bus, int mode, uint32_t hz)
+{
+    (void)bus; (void)mode; (void)hz;
+    return -1;
+}
+
+__attribute__((weak)) int host_spi_transfer_impl(int bus, const void *tx,
+                                                  void *rx, uint32_t len)
+{
+    (void)bus; (void)tx; (void)rx; (void)len;
+    return -1;
+}

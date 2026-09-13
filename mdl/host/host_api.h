@@ -46,7 +46,11 @@
  * distinction is forward-looking).
  */
 
-/* v9 (2026-09-13): adc_read / adc_read_mv. The resource id is a channel
+/* v10 (2026-09-13): spi_config / spi_transfer. One full-duplex transfer
+ * is the primitive, because that is what the bus physically does -- a
+ * byte goes out and a byte comes in on the same clock edges.
+ *
+ * v9 (2026-09-13): adc_read / adc_read_mv. The resource id is a channel
  * rather than an instance, so one firmware offers every channel and
  * nobody has to guess which pin a board brings out.
  *
@@ -80,7 +84,7 @@
  * v2 (2026-09-07): added atoi() to the vtable, and the two declaration
  * macros below -- console commands and hardware claims. Append-only:
  * every v1 entry keeps its slot and its meaning. */
-#define HOST_API_ABI_VERSION 9
+#define HOST_API_ABI_VERSION 10
 
 /*
  * Every module source file must invoke this exactly once at file scope.
@@ -186,6 +190,11 @@
  * `adc` console command to see which channels this board offers and
  * which pin each one is. */
 #define MDL_RES_ADC(ch)  { MDL_RES_KIND_ADC,   (uint8_t)(ch), 0, 0 }
+
+/* SPI takes an instance. Chip select is NOT part of it -- declare a GPIO
+ * and toggle it yourself, because CS timing is per-device and any policy
+ * baked into the driver would be wrong for a third of them. */
+#define MDL_RES_SPI(n)   { MDL_RES_KIND_SPI,   (uint8_t)(n), 0, 0 }
 
 #define MDL_MODULE_RESOURCES(...) \
     __attribute__((used, section(".mdl_resources"))) \
@@ -479,6 +488,35 @@ typedef struct host_api {
      * a second conversion, so prefer adc_read() in a tight loop and
      * this when the number is going to be believed. */
     int (*adc_read_mv)(int channel);
+
+    /*
+     * SPI [ABI v10]. bus is the instance, so spi_transfer(3, ...) is SPI3
+     * -- the number MDL_RES_SPI(3) declares. Run `spi` at the console for
+     * this board's pins and current settings.
+     *
+     * CHIP SELECT IS YOURS. Declare a GPIO and drive it around the
+     * transfer. Devices disagree about CS timing -- held across several
+     * transfers, pulsed between each, used to frame a command -- so there
+     * is no policy here that would be right for all of them.
+     */
+
+    /* mode is 0..3 (the usual CPOL/CPHA pairing), hz is the bus clock.
+     * Returns the ACHIEVED speed, which is the fastest divider that does
+     * not exceed what you asked for -- rounding down never breaks a
+     * device, rounding up breaks it one transfer in a thousand. Returns
+     * -1 if the bus is not yours or the arguments are out of range. */
+    int (*spi_config)(int bus, int mode, uint32_t hz);
+
+    /* One full-duplex transfer: tx[i] goes out as rx[i] comes in.
+     * Either buffer may be NULL -- a NULL tx sends 0x00, a NULL rx
+     * discards -- but not both. Buffers must be inside your own memory,
+     * and a transfer is capped at 256 bytes so that check stays
+     * meaningful.
+     *
+     * Returns 0, or -1 refused, or -2 if the peripheral never reported
+     * the byte through -- which means it is not clocking, and is
+     * deliberately distinct from receiving 0x00. */
+    int (*spi_transfer)(int bus, const void *tx, void *rx, uint32_t len);
 } host_api_t;
 
 /*
@@ -556,6 +594,20 @@ void host_adc_release(int channel);
 
 /* Enumerate what this board offers, for the `adc` console command:
  * returns the total count, or -1 once index runs past the end. */
+/* Which connector a pin comes out on, or 0 if it reaches none. Board
+ * fact, from board_pins.def -- see the header table there for why it is
+ * tracked separately from pin ownership. */
+int mdl_pin_connector(uint8_t pin);
+
+/* First pin of this peripheral that reaches no connector, or 0 if all of
+ * them do. Not a refusal -- a bus wired to an onboard device is fine
+ * without a header -- but worth saying out loud. */
+uint8_t mdl_periph_unreachable_pin(uint8_t kind, uint8_t id);
+
+bool host_spi_claim(int instance);
+void host_spi_release(int instance);
+int host_spi_describe(int index, int *instance, uint32_t *hz, int *mode);
+
 int host_adc_describe(int index, int *channel, char *port, int *pin,
                        bool *confirmed);
 

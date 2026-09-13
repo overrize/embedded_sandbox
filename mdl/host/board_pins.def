@@ -34,14 +34,37 @@
 /* ---- peripheral -> the pins it occupies ------------------------------ */
 /* MDL_PERIPH(kind, instance, human name, pin0, pin1, pin2, pin3) */
 
-MDL_PERIPH(I2C,   1, "I2C1 (PB6 SCL, PB7 SDA)",
-           P(1, 6), P(1, 7), NONE, NONE)
+/* PB8/PB9, per the schematic's own nets PB8_I2C1_SCL / PB9_I2C1_SDA, with
+ * the board's 10k pull-ups (R44/R45) on them. Both are on header U5.
+ *
+ * This was PB6/PB7 -- a valid I2C1 mapping on the chip, and the one the
+ * vendor example uses, but on THIS board PB6/PB7 are the camera connector
+ * (PB6_DCMI_D5 / PB7_DCMI_VSYNC) with no pull-ups anywhere. The bus came
+ * up and scanned clean, because an empty bus and the wrong bus look
+ * identical when nothing is attached. */
+MDL_PERIPH(I2C,   1, "I2C1 (PB8 SCL, PB9 SDA)",
+           P(1, 8), P(1, 9), NONE, NONE)
 
 MDL_PERIPH(UART,  1, "USART1 (PA9 TX, PA10 RX)",
            P(0, 9), P(0, 10), NONE, NONE)
 
-MDL_PERIPH(UART,  2, "USART2 (PA2 TX, PA3 RX)",
+/* USART2 as the CHIP maps it, PA2/PA3 -- kept because self_clash uses it to
+ * demonstrate a real collision (PA3 is also BTN0).
+ *
+ * It is not, however, how this BOARD wires USART2: the schematic routes it
+ * to PD5/PD6 (nets PD5_U2_TX / PD6_U2_RX, both on header U5), while PA2 is
+ * RMII_MDIO and PA3 goes only to the SW3 button. That is the actual reason
+ * USART2 reception was untestable for three rounds -- not silicon
+ * behaviour, just a peripheral configured onto pins this board does not
+ * use for it. Instance 4 below is the reachable one. */
+MDL_PERIPH(UART,  2, "USART2 (PA2 TX, PA3 RX -- PA3 has no header)",
            P(0, 2), P(0, 3), NONE, NONE)
+
+/* USART2 the way the board wires it. Numbered 4 because the id is ours to
+ * choose and 2 is taken by the chip-mapped variant above; an MDL asking
+ * for reachable USART2 pins wants this one. */
+MDL_PERIPH(UART,  4, "USART2 on PD5 TX / PD6 RX (board routing)",
+           P(3, 5), P(3, 6), NONE, NONE)
 
 /* PB10/PB11 confirmed against the vendor's usart/interrupt and
  * usart/polling examples (GPIO_MUX_7), not inferred from the AF table.
@@ -56,6 +79,26 @@ MDL_PERIPH(UART,  3, "USART3 (PB10 TX, PB11 RX)",
 /* CH3/CH4 (PB0/PB1) from the AF table, not confirmed against an example. */
 MDL_PERIPH(TIMER, 3, "TMR3 (PA6 CH1, PA7 CH2, PB0 CH3, PB1 CH4)",
            P(0, 6), P(0, 7), P(1, 0), P(1, 1))
+
+/* SPI3 on PB3/PB4/PB5, which is where THIS BOARD routes it -- nets
+ * PB3_SPI3_SCK / PB4_SPI3_MISO / PB5_SPI3_MOSI, all three on header U5,
+ * and the same bus the onboard W25Q32 flash hangs off (CS = PE3).
+ *
+ * The first version of this used PC10/PC11/PC12, which is what the vendor's
+ * spi examples use and is therefore AF-confirmed -- but on this board those
+ * three pins are the microSD socket (PC10_SD_D2 / PC11_SD_D3 / PC12_SD_CLK)
+ * and reach no header at all. Being confirmed on the chip is not the same
+ * as being reachable on the board; that distinction is what the header
+ * table above now records.
+ *
+ * GPIO_MUX_6 here follows the vendor's own SPI3 examples, but with PB3/4/5
+ * rather than PC10/11/12 it is NOT example-confirmed. It does not need to
+ * be taken on faith either: the W25Q32 on this bus answers 0x9F with a
+ * JEDEC id, so reading EF 40 xx proves the mapping in one transfer.
+ *
+ * Chip select is absent on purpose -- a plain GPIO an MDL declares. */
+MDL_PERIPH(SPI,   3, "SPI3 (PB3 SCK, PB4 MISO, PB5 MOSI)",
+           P(1, 3), P(1, 4), P(1, 5), NONE)
 
 /* ADC1 channels. The id is a CHANNEL, so each entry occupies one pin.
  *
@@ -78,6 +121,81 @@ MDL_PERIPH(ADC,  12, "ADC1 CH12 (PC2)", P(2, 2),  NONE, NONE, NONE)
 MDL_PERIPH(ADC,  13, "ADC1 CH13 (PC3)", P(2, 3),  NONE, NONE, NONE)
 MDL_PERIPH(ADC,  14, "ADC1 CH14 (PC4)", P(2, 4),  NONE, NONE, NONE)
 MDL_PERIPH(ADC,  15, "ADC1 CH15 (PC5)", P(2, 5),  NONE, NONE, NONE)
+
+/* ---- pins reachable on a header -------------------------------------- */
+/* MDL_HEADER_PIN(pin, connector)
+ *
+ * WHY THIS TABLE EXISTS. Everything else here answers "who owns this pin".
+ * This answers a different question that kept getting guessed instead of
+ * looked up: CAN I PHYSICALLY REACH IT. Three peripherals were designed
+ * against pins that turned out to have no header -- USART2's RX (PA3, only
+ * the SW3 button), then SPI3's PC10/PC11/PC12 (the microSD socket) -- and
+ * each one cost a round of hardware testing to discover.
+ *
+ * From the UYUP-RPI-A-2.4 schematic: two 2x20 connectors, U5 and U6.
+ * Note the schematic's MCU symbol is an STM32F103VCT6; the board is sold
+ * for "STM32F1/F4 and compatible", and the AT32F435VCT7 is pin-compatible,
+ * so the ROUTING below is what the board does. The function suffixes in
+ * its net names (PB3_SPI3_SCK and so on) are STM32 alternate-function
+ * assignments, and need confirming per-peripheral on this part rather than
+ * assumed.
+ */
+
+/* U5 -- the LED / button / interface side */
+MDL_HEADER_PIN(P(1,  3), 5)   /* PB3,  net PB3_SPI3_SCK   */
+MDL_HEADER_PIN(P(1,  4), 5)   /* PB4,  net PB4_SPI3_MISO  */
+MDL_HEADER_PIN(P(1,  5), 5)   /* PB5,  net PB5_SPI3_MOSI  */
+MDL_HEADER_PIN(P(1,  8), 5)   /* PB8,  net PB8_I2C1_SCL   */
+MDL_HEADER_PIN(P(1,  9), 5)   /* PB9,  net PB9_I2C1_SDA   */
+MDL_HEADER_PIN(P(1, 10), 5)   /* PB10, net PB10_SPI2_SCK  */
+MDL_HEADER_PIN(P(2,  0), 5)   /* PC0  */
+MDL_HEADER_PIN(P(2,  2), 5)   /* PC2,  net PC2_SPI2_MISO  */
+MDL_HEADER_PIN(P(2,  3), 5)   /* PC3,  net PC3_SPI2_MOSI  */
+MDL_HEADER_PIN(P(2, 13), 5)   /* PC13 */
+MDL_HEADER_PIN(P(3,  3), 5)   /* PD3  */
+MDL_HEADER_PIN(P(3,  4), 5)   /* PD4  */
+MDL_HEADER_PIN(P(3,  5), 5)   /* PD5,  net PD5_U2_TX      */
+MDL_HEADER_PIN(P(3,  6), 5)   /* PD6,  net PD6_U2_RX      */
+MDL_HEADER_PIN(P(3,  7), 5)   /* PD7  */
+MDL_HEADER_PIN(P(3, 11), 5)   /* PD11 */
+MDL_HEADER_PIN(P(3, 12), 5)   /* PD12, net PD12_T4C1      */
+MDL_HEADER_PIN(P(3, 13), 5)   /* PD13, net PD13_T4C2      */
+MDL_HEADER_PIN(P(3, 14), 5)   /* PD14, net PD14_T4C3      */
+MDL_HEADER_PIN(P(3, 15), 5)   /* PD15, net PD15_T4C4      */
+MDL_HEADER_PIN(P(4,  7), 5)   /* PE7  */
+MDL_HEADER_PIN(P(4,  8), 5)   /* PE8  */
+MDL_HEADER_PIN(P(4,  9), 5)   /* PE9  */
+MDL_HEADER_PIN(P(4, 10), 5)   /* PE10 */
+MDL_HEADER_PIN(P(4, 11), 5)   /* PE11 */
+MDL_HEADER_PIN(P(4, 12), 5)   /* PE12 */
+MDL_HEADER_PIN(P(4, 13), 5)   /* PE13 */
+MDL_HEADER_PIN(P(0,  8), 5)   /* PA8  */
+
+/* U6 -- the camera / ethernet / CAN side */
+MDL_HEADER_PIN(P(0,  1), 6)   /* PA1,  net PA1_RMII_REF_CLK  */
+MDL_HEADER_PIN(P(0,  2), 6)   /* PA2,  net PA2_RMII_MDIO     */
+MDL_HEADER_PIN(P(0,  4), 6)   /* PA4,  net PA4_DCMI_HSYNC    */
+MDL_HEADER_PIN(P(0,  5), 6)   /* PA5  */
+MDL_HEADER_PIN(P(0,  6), 6)   /* PA6,  net PA6_DCMI_PIXCLK   */
+MDL_HEADER_PIN(P(0,  7), 6)   /* PA7,  net PA7_RMII_CRS_DV   */
+MDL_HEADER_PIN(P(1,  0), 6)   /* PB0  */
+MDL_HEADER_PIN(P(1,  6), 6)   /* PB6,  net PB6_DCMI_D5       */
+MDL_HEADER_PIN(P(1,  7), 6)   /* PB7,  net PB7_DCMI_VSYNC    */
+MDL_HEADER_PIN(P(1, 11), 6)   /* PB11, net PB11_RMII_TXEN    */
+MDL_HEADER_PIN(P(1, 12), 6)   /* PB12, net PB12_RMII_TXD0    */
+MDL_HEADER_PIN(P(1, 13), 6)   /* PB13, net PB13_RMII_TXD1    */
+MDL_HEADER_PIN(P(2,  1), 6)   /* PC1,  net PC1_RMII_MDC      */
+MDL_HEADER_PIN(P(2,  4), 6)   /* PC4,  net PC4_RMII_RXD0     */
+MDL_HEADER_PIN(P(2,  5), 6)   /* PC5,  net PC5_RMII_RXD1     */
+MDL_HEADER_PIN(P(2,  6), 6)   /* PC6,  net PC6_DCMI_D0       */
+MDL_HEADER_PIN(P(2,  7), 6)   /* PC7,  net PC7_DCMI_D1       */
+MDL_HEADER_PIN(P(3,  0), 6)   /* PD0,  net PD0_CAN1_RX       */
+MDL_HEADER_PIN(P(3,  1), 6)   /* PD1,  net PD1_CAN1_TX       */
+MDL_HEADER_PIN(P(4,  0), 6)   /* PE0,  net PE0_DCMI_D2       */
+MDL_HEADER_PIN(P(4,  1), 6)   /* PE1,  net PE1_DCMI_D3       */
+MDL_HEADER_PIN(P(4,  4), 6)   /* PE4,  net PE4_DCMI_D4       */
+MDL_HEADER_PIN(P(4,  5), 6)   /* PE5,  net PE5_DCMI_D6       */
+MDL_HEADER_PIN(P(4,  6), 6)   /* PE6,  net PE6_DCMI_D7       */
 
 /* ---- physical pins the host holds ------------------------------------ */
 /* MDL_PIN_OWNER(pin, HARD|YIELDS, who)
@@ -111,3 +229,8 @@ MDL_GPIO_PIN(1, P(4, 15), "LEDG (PE15, LED4 green)")
 MDL_GPIO_PIN(2, P(0,  3), "BTN0 (PA3, SW3)")
 MDL_GPIO_PIN(3, P(4,  2), "BTN1 (PE2, SW4)")
 MDL_GPIO_PIN(4, P(0,  9), "U1TX (PA9, DAP debug UART)")
+/* The onboard W25Q32's chip select (net PE3_FLASH_NCS). Not on a header,
+ * and it does not need to be -- it is already wired to the flash. An MDL
+ * driving SPI3 declares this to get CS, which is exactly the arrangement
+ * host_spi.c intends: CS is a pin, not a driver feature. */
+MDL_GPIO_PIN(5, P(4,  3), "FLASH_NCS (PE3, W25Q32 chip select, out, 1=idle)")

@@ -166,12 +166,13 @@ typedef enum {
      * channels. The host expands a channel to its pin, so ADC(4) and a
      * GPIO claim on PA4 collide by pin, which is the point of R3. */
     MDL_RES_KIND_ADC   = 5,
+    MDL_RES_KIND_SPI   = 6, /* id = instance, e.g. 3 for SPI3 */
 
     /* Not a kind: the bound the loader validates against. Kept here so
      * adding a kind is one edit rather than three -- the first version of
      * ADC was rejected at load because loader.c still compared against
      * KIND_TIMER, and nothing in the build could have caught that. */
-    MDL_RES_KIND_MAX   = 5,
+    MDL_RES_KIND_MAX   = 6,
 } mdl_res_kind_t;
 
 /*

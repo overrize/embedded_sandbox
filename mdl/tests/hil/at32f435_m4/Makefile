@@ -76,6 +76,8 @@ C_SRCS := \
   $(MDL)/host/host_i2c.c \
   $(MDL)/host/host_uart.c \
   $(MDL)/host/host_adc.c \
+  $(MDL)/host/host_spi.c \
+  $(VENDOR)/libraries/drivers/src/at32f435_437_spi.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_adc.c \
   $(VENDOR)/libraries/drivers/src/at32f435_437_usart.c \
   $(VENDOR)/middlewares/i2c_application_library/i2c_application.c \

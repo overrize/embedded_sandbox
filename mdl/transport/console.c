@@ -224,6 +224,7 @@ static void cmd_help(void)
         "  arena             arena region addresses\r\n"
         "  pins              gpio pins, and who owns each one\r\n"
         "  adc               adc channels, and which pin each one is\r\n"
+        "  spi               spi buses, their pins and current settings\r\n"
         "  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)\r\n"
         "  btn <i>           read whitelisted input pin i\r\n"
         "  mem <addr> [n]    dump n words (default 8) from addr\r\n"
@@ -457,6 +458,32 @@ static void cmd_arena(void)
  * trusting that the firmware on the device matches it, which is exactly
  * the assumption that cost three rounds on USART2's RX pin.
  */
+/* Same purpose as `adc`: answer "where do I connect?" from a terminal,
+ * without writing an MDL and without trusting that board_pins.def matches
+ * whatever firmware is actually on the device. */
+static void cmd_spi(void)
+{
+    int inst, mode;
+    uint32_t hz;
+
+    if (host_spi_describe(0, &inst, &hz, &mode) < 0) {
+        mdl_console_puts("no SPI buses in this build\r\n");
+        return;
+    }
+    for (int i = 0; host_spi_describe(i, &inst, &hz, &mode) >= 0; i++) {
+        mdl_console_puts("  MDL_RES_SPI(");
+        put_u32((uint32_t)inst);
+        mdl_console_puts(")  PB3 SCK / PB4 MISO / PB5 MOSI   mode ");
+        put_u32((uint32_t)mode);
+        mdl_console_puts("  ");
+        put_u32(hz);
+        mdl_console_puts(" Hz\r\n");
+    }
+    mdl_console_puts("chip select is not the driver's -- declare a GPIO and drive it\r\n");
+    mdl_console_puts("onboard W25Q32 is on this bus (CS = PE3, whitelist pin 5)" 
+                      " -- the spidemo MDL reads its JEDEC id\r\n");
+}
+
 static void cmd_adc(void)
 {
     int ch, pin;
@@ -604,6 +631,7 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "arena")  == 0) cmd_arena();
     else if (strcmp(argv[0], "pins")   == 0) cmd_pins();
     else if (strcmp(argv[0], "adc")    == 0) cmd_adc();
+    else if (strcmp(argv[0], "spi")    == 0) cmd_spi();
     else if (strcmp(argv[0], "led")    == 0) cmd_led(argc, argv);
     else if (strcmp(argv[0], "btn")    == 0) cmd_btn(argc, argv);
     else if (strcmp(argv[0], "mem")    == 0) cmd_mem(argc, argv);

@@ -47,10 +47,12 @@ typedef struct {
 static const pin_owner_t g_pin_owner[] = {
 #define MDL_PERIPH(k, i, n, p0, p1, p2, p3)
 #define MDL_GPIO_PIN(idx, pin, name)
+#define MDL_HEADER_PIN(pin, conn)
 #define MDL_PIN_OWNER(pin, how, who) { (pin), (how), (who) },
 #include "board_pins.def"
 #undef MDL_PERIPH
 #undef MDL_GPIO_PIN
+#undef MDL_HEADER_PIN
 #undef MDL_PIN_OWNER
 };
 #define PIN_OWNER_COUNT (sizeof(g_pin_owner) / sizeof(g_pin_owner[0]))
@@ -84,15 +86,82 @@ typedef struct {
 static const periph_pins_t g_periph[] = {
 #define MDL_PIN_OWNER(pin, how, who)
 #define MDL_GPIO_PIN(idx, pin, name)
+#define MDL_HEADER_PIN(pin, conn)
 #define MDL_PERIPH(k, i, n, p0, p1, p2, p3) \
     { MDL_RES_KIND_##k, (i), (n), { (p0), (p1), (p2), (p3) },            \
       (uint8_t)(((p0) != NONE) + ((p1) != NONE) + ((p2) != NONE) + ((p3) != NONE)) },
 #include "board_pins.def"
 #undef MDL_PERIPH
 #undef MDL_GPIO_PIN
+#undef MDL_HEADER_PIN
 #undef MDL_PIN_OWNER
 };
 #define PERIPH_COUNT (sizeof(g_periph) / sizeof(g_periph[0]))
+
+/* ---- which pins a person can actually reach ------------------------- */
+
+/*
+ * Separate from everything above because it answers a separate question.
+ * The tables before this one say who OWNS a pin; this one says whether it
+ * comes out on a connector at all.
+ *
+ * It exists because that got guessed three times instead of looked up,
+ * and each guess cost a round of hardware testing: USART2's RX on PA3
+ * (button only), then SPI3 on PC10/PC11/PC12 (microSD socket). Both were
+ * correct about the chip and useless on the board.
+ */
+typedef struct {
+    uint8_t pin;
+    uint8_t connector;
+} header_pin_t;
+
+static const header_pin_t g_header[] = {
+#define MDL_PIN_OWNER(pin, how, who)
+#define MDL_GPIO_PIN(idx, pin, name)
+#define MDL_PERIPH(k, i, n, p0, p1, p2, p3)
+#define MDL_HEADER_PIN(pin, conn) { (pin), (conn) },
+#include "board_pins.def"
+#undef MDL_PERIPH
+#undef MDL_GPIO_PIN
+#undef MDL_HEADER_PIN
+#undef MDL_PIN_OWNER
+};
+#define HEADER_COUNT (sizeof(g_header) / sizeof(g_header[0]))
+
+int mdl_pin_connector(uint8_t pin)
+{
+    for (unsigned i = 0; i < HEADER_COUNT; i++) {
+        if (g_header[i].pin == pin) {
+            return (int)g_header[i].connector;
+        }
+    }
+    return 0;   /* 0 = not on any header */
+}
+
+/*
+ * Is every pin of this peripheral reachable?
+ *
+ * Returns the first unreachable pin, or 0 if they all are. Callers report
+ * it rather than refuse: a peripheral wired to something on the board
+ * (the W25Q32 flash, the microSD socket) is perfectly usable without
+ * being on a header -- what must not happen is someone spending a test
+ * round discovering there is nowhere to attach a wire.
+ */
+uint8_t mdl_periph_unreachable_pin(uint8_t kind, uint8_t id)
+{
+    for (unsigned i = 0; i < PERIPH_COUNT; i++) {
+        if (g_periph[i].kind != kind || g_periph[i].id != id) {
+            continue;
+        }
+        for (unsigned k = 0; k < g_periph[i].npins; k++) {
+            if (mdl_pin_connector(g_periph[i].pins[k]) == 0) {
+                return g_periph[i].pins[k];
+            }
+        }
+        return 0;
+    }
+    return 0;
+}
 
 static const periph_pins_t *periph_lookup(uint8_t kind, uint8_t id)
 {
@@ -175,6 +244,7 @@ static const char *kind_name(uint8_t kind)
     case MDL_RES_KIND_UART:  return "uart";
     case MDL_RES_KIND_TIMER: return "timer";
     case MDL_RES_KIND_ADC:   return "adc";
+    case MDL_RES_KIND_SPI:   return "spi";
     default:                  return "unknown";
     }
 }
