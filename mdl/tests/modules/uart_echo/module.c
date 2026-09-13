@@ -1,41 +1,37 @@
 /*
  * UART from inside the sandbox [ABI v8]: transmit, event-driven receive.
  *
- * HOW RECEPTION IS TESTED HERE: the SW3 button IS the signal source.
+ * HOW RECEPTION IS TESTED: one jumper across PB10 and PB11. Verified on
+ * hardware -- "MDL" goes out on PB10 and comes back on PB11, byte for
+ * byte, and the event path delivers it to module_event() as well.
  *
- * PA3 is USART2's RX and also the SW3 button, and PA3 is not brought out
- * to a header on this board -- so there is no jumper to run and no second
- * device to attach. Pressing SW3 pulls the receive line low, which is a
- * start bit, and that is the only signal this board can put on that pin.
+ * That is a true full-duplex loopback -- the transmitter drives one pin,
+ * the receiver listens on another, and a wire joins them. It leans on no
+ * silicon quirk, needs no second device, needs nobody pressing anything,
+ * and anybody can repeat it.
  *
- * The baud rate is what makes it work, and 1200 is chosen, not inherited:
- * one bit lasts 833us there, so a press is measured in bit times rather
- * than in hundreds of them.
+ * Getting here took three wrong turns, and why is worth keeping. The work
+ * started on USART2 because that was the instance already in the table,
+ * and USART2's RX is PA3 -- which on this board has no header and carries
+ * the SW3 button. Everything after that was an attempt to test reception
+ * through a pin that cannot receive: half-duplex loopback (the receiver is
+ * not triggered while transmitting), then the button as a signal source (a
+ * real signal, but one that needs a person, so a null result cannot be
+ * told apart from nobody pressing).
  *
- *   a very short tap (~2-3ms)  start bit, a few low data bits, then the
- *                              line is high again for the stop bit --
- *                              FRAMES AS A REAL BYTE, and the whole chain
- *                              runs: ISR, ring, event, module_event()
- *   a normal press (30ms+)     line still low where the stop bit belongs
- *                              -- a FRAMING ERROR, which the host counts
+ * The question was never "how do I get a signal onto PA3". It was "which
+ * USART has both pins on headers" -- and USART3 does.
  *
- * Both outcomes are evidence, which is the point. What was measured
- * before -- zero bytes AND zero errors -- means the receiver was never
- * triggered at all, and that is the only result that says the path is
- * broken. An earlier version of this comment predicted that a mechanical
- * edge was simply too slow to frame; that reasoning was done at 9600 baud
- * and never actually run with a finger on the button.
- *
- * Note this MDL declares only MDL_RES_UART(2). It does NOT declare
- * MDL_RES_GPIO(2), and could not: both are PA3, and the host refuses one
- * MDL claiming the same pin twice. The button is the UART's now.
+ * Pin-level arbitration still applies: MDL_RES_UART(3) expands on the host
+ * side to PB10 and PB11, so an MDL that also claimed either of those as
+ * plain GPIO is refused -- by pin, not by name.
  */
 #include "host_api.h"
 
 MDL_MODULE_ABI_DECLARE();
 MDL_MODULE_COMMAND("uart");
 MDL_MODULE_EVENTS(4, 100);
-MDL_MODULE_RESOURCES(MDL_RES_UART(2));   /* PA2 TX, PA3 RX (= SW3) */
+MDL_MODULE_RESOURCES(MDL_RES_UART(3));   /* PB10 TX, PB11 RX -- jumper them */
 
 static uint32_t g_rx_total = 0;
 static uint32_t g_events   = 0;
@@ -79,23 +75,22 @@ static char *put_str(char *w, const char *end, const char *t)
 
 int module_init(const host_api_t *host)
 {
-    if (host->uart_config(2, 1200) != 0) {
+    if (host->uart_config(3, 9600) != 0) {
         host->log("uart_echo: uart_config refused -- is USART2 declared?");
         return -1;
     }
 
-    /* 1200, so a button press lands in the right order of magnitude
-     * against the 833us bit period. The host refuses anything below 1200,
-     * so this is as slow as the receiver can be made without a reflash --
-     * and it is slow enough. */
+    /* 9600. With a real wire there is no reason to crawl -- the 1200 baud
+     * of the button experiment existed only to stretch the bit period out
+     * to where a mechanical press could be framed as a character. */
     const char hello[] = "MDL uart alive\r\n";
-    int w = host->uart_write(2, hello, sizeof(hello) - 1);
+    int w = host->uart_write(3, hello, sizeof(hello) - 1);
     if (w == -2) {
         host->log("uart_echo: transmit timed out -- clock or pin mux wrong");
     } else if (w != 0) {
         host->log("uart_echo: transmit refused");
     } else {
-        host->log("uart_echo: 1200 baud. PRESS SW3 -- short taps frame as bytes, long presses as errors. Then run `uart`.");
+        host->log("uart_echo: USART3 at 9600. Jumper PB10 to PB11, then run `uart`.");
     }
     return 0;
 }
@@ -110,7 +105,7 @@ int module_event(const host_api_t *host, const mdl_event_t *evt)
     /* Local buffer, i.e. on this task's stack -- which is module memory
      * the host accepts. It did not, until I2C made someone try it. */
     uint8_t buf[32];
-    int n = host->uart_read(2, buf, sizeof(buf));
+    int n = host->uart_read(3, buf, sizeof(buf));
     if (n <= 0) {
         return 0;
     }
@@ -128,45 +123,59 @@ int module_cmd(const host_api_t *host, int argc, const char *const *argv)
     (void)argc;
     (void)argv;
 
-    /* Half-duplex probe. This does NOT work as a self-test on this part --
-     * measured: 3 sent, 0 received, dropped counter also 0, so the
-     * receiver is never triggered while transmitting (see host_uart.c).
-     * It is left in because it costs nothing and would immediately show a
-     * change if that silicon behaviour were ever different.
+    /* Send a known pattern and read it straight back off the wire.
      *
-     * PA3 is not brought out to a header on this board, so there is no
-     * jumper to run -- an earlier version of this comment suggested one,
-     * which was advice for a board this is not. The SW3 button is the only
-     * signal source PA3 has, which is why the baud rate above is set for
-     * it rather than for a serial peer. */
-    if (host->uart_loopback(2, 1) != 0) {
-        host->log("  loopback not available");
-    } else {
+     * READ DIRECTLY, DO NOT WAIT FOR THE EVENT. The first version of this
+     * slept 50ms expecting module_event() to have run, and reported
+     * "received 0" on a loopback that was working perfectly -- because
+     * module_cmd() and module_event() are drained by the SAME resident
+     * task (see F1), so an event cannot be delivered while this function
+     * is the thing occupying that task. It was waiting on something its
+     * own execution made impossible.
+     *
+     * The cumulative counters below were what exposed it: they showed
+     * exactly 16 bytes, the length of the hello line sent from
+     * module_init(), while this test insisted nothing had arrived. When
+     * two numbers on the same screen disagree, one of them is measuring
+     * the wrong thing.
+     *
+     * uart_read() does not block and reads the host's ring directly, which
+     * is the right tool here and needs no event at all. */
+    {
         const char probe[] = "MDL";
-        uint32_t before = g_rx_total;
-        if (host->uart_write(2, probe, 3) != 0) {
-            host->log("  loopback: transmit failed");
+        uint8_t back[8];
+
+        /* Drain anything already waiting, so the comparison below is about
+         * this probe and not about earlier traffic. */
+        (void)host->uart_read(3, back, sizeof(back));
+
+        if (host->uart_write(3, probe, 3) != 0) {
+            host->log("  transmit failed");
         } else {
-            /* Three bytes at 9600 is ~3ms; 50 leaves room for the event to
-             * be delivered and module_event() to run. */
-            host->delay_ms(50);
-            uint32_t got = g_rx_total - before;
+            /* 3 bytes at 9600 is ~3.1ms on the wire. 20 is generous. */
+            host->delay_ms(20);
+            int got = host->uart_read(3, back, sizeof(back));
+            bool match = (got == 3) && back[0] == 'M' && back[1] == 'D' && back[2] == 'L';
+
             char *lw = g_line;
             const char *lend = g_line + sizeof(g_line);
-            lw = put_str(lw, lend, "  loopback: sent 3, received ");
-            lw = put_u32(lw, lend, got);
-            lw = put_str(lw, lend, got == 3u
-                    ? "  -- receive path WORKS"
-                    : "  -- expected on this part; press SW3 instead");
+            lw = put_str(lw, lend, "  wire test: sent MDL, got back ");
+            lw = put_u32(lw, lend, (uint32_t)(got < 0 ? 0 : got));
+            lw = put_str(lw, lend, " byte(s) ");
+            for (int i = 0; i < got && i < 8; i++) {
+                lw = put_hex8(lw, lend, back[i]);
+            }
+            lw = put_str(lw, lend, match
+                    ? " -- RECEIVE PATH VERIFIED, byte for byte"
+                    : " -- no jumper between PB10 and PB11?");
             *lw = 0;
             host->log(g_line);
         }
-        host->uart_loopback(2, 0);
     }
 
     char *w = g_line;
     const char *end = g_line + sizeof(g_line);
-    w = put_str(w, end, "  uart2: ");
+    w = put_str(w, end, "  uart3: ");
     w = put_u32(w, end, g_rx_total);
     w = put_str(w, end, " bytes in ");
     w = put_u32(w, end, g_events);
@@ -183,8 +192,8 @@ int module_cmd(const host_api_t *host, int argc, const char *const *argv)
     /* Transmit again on demand, so the command also answers "is TX still
      * working" rather than only reporting on RX. */
     const char again[] = "ping\r\n";
-    if (host->uart_write(2, again, sizeof(again) - 1) == 0) {
-        host->log("  sent 'ping' on PA2");
+    if (host->uart_write(3, again, sizeof(again) - 1) == 0) {
+        host->log("  sent 'ping' on PB10");
     }
     return (int)g_rx_total;
 }

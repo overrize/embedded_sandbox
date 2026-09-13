@@ -66,9 +66,22 @@ typedef struct {
 } uart_bus_t;
 
 static uart_bus_t g_uarts[] = {
+    /* USART2. Kept, but note its RX (PA3) has no header on this board and
+     * carries the SW3 button, so it can transmit and it can hear a button,
+     * and that is all it will ever do here. */
     { 2, USART2, CRM_USART2_PERIPH_CLOCK, USART2_IRQn,
       GPIOA, GPIO_PINS_2, GPIO_PINS_3, GPIO_PINS_SOURCE2, GPIO_PINS_SOURCE3,
       GPIO_MUX_7, CRM_GPIOA_PERIPH_CLOCK,
+      false, UART_DEFAULT_BAUD, { 0 }, 0, 0, 0 },
+
+    /* USART3 on PB10/PB11 -- the instance that exists to be TESTABLE.
+     * Both pins are brought out and adjacent, so one jumper across them is
+     * a true full-duplex loopback: no silicon quirk to rely on, no button,
+     * no second device, and repeatable by anyone. Pins and MUX_7 are from
+     * the vendor's usart/interrupt example, not from the AF table. */
+    { 3, USART3, CRM_USART3_PERIPH_CLOCK, USART3_IRQn,
+      GPIOB, GPIO_PINS_10, GPIO_PINS_11, GPIO_PINS_SOURCE10, GPIO_PINS_SOURCE11,
+      GPIO_MUX_7, CRM_GPIOB_PERIPH_CLOCK,
       false, UART_DEFAULT_BAUD, { 0 }, 0, 0, 0 },
 };
 #define UART_COUNT (sizeof(g_uarts) / sizeof(g_uarts[0]))
@@ -119,6 +132,12 @@ void USART2_IRQHandler(void);
 void USART2_IRQHandler(void)
 {
     uart_isr(&g_uarts[0]);
+}
+
+void USART3_IRQHandler(void);
+void USART3_IRQHandler(void)
+{
+    uart_isr(&g_uarts[1]);
 }
 
 /* ---- bring-up / tear-down -------------------------------------------- */

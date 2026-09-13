@@ -43,6 +43,16 @@ MDL_PERIPH(UART,  1, "USART1 (PA9 TX, PA10 RX)",
 MDL_PERIPH(UART,  2, "USART2 (PA2 TX, PA3 RX)",
            P(0, 2), P(0, 3), NONE, NONE)
 
+/* PB10/PB11 confirmed against the vendor's usart/interrupt and
+ * usart/polling examples (GPIO_MUX_7), not inferred from the AF table.
+ *
+ * This instance exists because it is the one a jumper can reach: TX and RX
+ * are adjacent pins and neither is spoken for. USART2's RX is PA3, which
+ * has no header at all, so USART2 can never be looped back on this board.
+ */
+MDL_PERIPH(UART,  3, "USART3 (PB10 TX, PB11 RX)",
+           P(1, 10), P(1, 11), NONE, NONE)
+
 /* CH3/CH4 (PB0/PB1) from the AF table, not confirmed against an example. */
 MDL_PERIPH(TIMER, 3, "TMR3 (PA6 CH1, PA7 CH2, PB0 CH3, PB1 CH4)",
            P(0, 6), P(0, 7), P(1, 0), P(1, 1))
