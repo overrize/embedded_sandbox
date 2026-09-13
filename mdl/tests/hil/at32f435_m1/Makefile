@@ -46,6 +46,7 @@ C_SRCS := \
   main.c \
   $(MDL)/core/registry.c \
   $(MDL)/core/sandbox.c \
+  $(MDL)/core/buddy.c \
   $(MDL)/core/loader.c \
   $(MDL)/core/crc32.c \
   $(MDL)/arch/arm_cm4/mpu_armv7m.c \

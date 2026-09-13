@@ -621,13 +621,42 @@ void host_watchdog_feed(void)
  * load/unload leak test would catch if it's ever not good enough. */
 
 typedef struct free_block {
-    struct free_block *next;
-    size_t              size;
+    struct free_block *next;   /* only meaningful while the block is free */
+    size_t              size;   /* usable bytes, excluding this header */
 } free_block_t;
 
-static uint8_t     *g_pool_next;
-static uint8_t      *g_pool_end;
-static free_block_t *g_free_list;
+/*
+ * Every allocated block carries this header immediately in front of it.
+ *
+ * IT WAS NOT THERE, and the consequence was that free() did nothing at
+ * all. Nothing recorded how large an allocation was, so free() had no
+ * size to return and wrote `size = 0` as a placeholder -- which made the
+ * block permanently unmatchable against alloc()'s `b->size >= n` test.
+ * The free list was write-only. A pool could only ever shrink.
+ *
+ * That is not visible from one run: the first `heap` command got 8 blocks
+ * and the second got 4, which is the only way it showed at all.
+ *
+ * A header is safe here in a way it would not be in buddy.c: these blocks
+ * live INSIDE the module's already-aligned data region and are never
+ * handed to an MPU region, so shifting them by 8 bytes costs nothing.
+ * Eight rather than four keeps the returned pointer 8-byte aligned, which
+ * callers are entitled to assume for a uint64_t or a double.
+ */
+#define BLK_HDR_SIZE (sizeof(free_block_t))
+
+/* The pool's bookkeeping lives in module_t now [S1] -- see registry.h.
+ * These accessors exist so the cast between the slot's untyped field and
+ * this file's private free_block_t happens in exactly one place. */
+static free_block_t *pool_free_list(module_t *m)
+{
+    return (free_block_t *)m->free_list;
+}
+
+static void pool_set_free_list(module_t *m, free_block_t *b)
+{
+    m->free_list = (void *)b;
+}
 
 void host_api_pool_reset(module_t *m)
 {
@@ -636,9 +665,9 @@ void host_api_pool_reset(module_t *m)
      * before each module_cmd() call. Handing them out via alloc() too
      * would let a module's own allocation be overwritten by the next
      * command's argv. */
-    g_pool_next  = (uint8_t *)m->heap_stack_lo + MDL_ARGBLOCK_SIZE;
-    g_pool_end   = (uint8_t *)m->heap_stack_lo + MDL_HEAP_SIZE;
-    g_free_list  = NULL;
+    m->pool_next = (uint8_t *)m->heap_stack_lo + MDL_ARGBLOCK_SIZE;
+    m->pool_end  = (uint8_t *)m->heap_stack_lo + MDL_HEAP_SIZE;
+    m->free_list = NULL;
 }
 
 static void *host_alloc_impl(size_t n)
@@ -648,21 +677,37 @@ static void *host_alloc_impl(size_t n)
     }
     n = (n + 7u) & ~(size_t)7u;
 
-    free_block_t **prev = &g_free_list;
-    for (free_block_t *b = g_free_list; b != NULL; b = b->next) {
+    /* The CALLER's pool [S1]. Two modules must never share a free list:
+     * their arenas are different memory, and a block from one handed to the
+     * other would be a pointer straight through the sandbox boundary. */
+    module_t *m = mdl_caller_slot();
+    if (m == NULL) {
+        return NULL;
+    }
+
+    /* First fit over blocks already returned by free(). The size stored
+     * in the header is what makes this test mean anything -- see the
+     * BLK_HDR_SIZE comment for what happened when it did not. */
+    free_block_t *head = pool_free_list(m);
+    free_block_t **prev = &head;
+    for (free_block_t *b = head; b != NULL; b = b->next) {
         if (b->size >= n) {
             *prev = b->next;
-            return (void *)b;
+            pool_set_free_list(m, head);
+            return (void *)((uint8_t *)b + BLK_HDR_SIZE);
         }
         prev = &b->next;
     }
 
-    if ((size_t)(g_pool_end - g_pool_next) < n) {
+    /* Fresh space: the header comes out of the pool too. */
+    if ((size_t)(m->pool_end - m->pool_next) < n + BLK_HDR_SIZE) {
         return NULL;
     }
-    void *ret = g_pool_next;
-    g_pool_next += n;
-    return ret;
+    free_block_t *nb = (free_block_t *)m->pool_next;
+    nb->next = NULL;
+    nb->size = n;
+    m->pool_next += n + BLK_HDR_SIZE;
+    return (void *)((uint8_t *)nb + BLK_HDR_SIZE);
 }
 
 void *host_alloc(size_t n) MDL_SYSCALL_GATE;
@@ -690,24 +735,26 @@ static void host_free_impl(void *p)
      * allocator's bookkeeping does internally). */
     /* Against the CALLER's heap [S0].
      *
-     * NOTE FOR S1: the allocator STATE above (g_free_list, g_pool_next,
-     * g_pool_end) is still module-level static, i.e. one allocator for one
-     * module. That is correct while there is one slot and WRONG the moment
-     * there are two -- they would share a free list across separate arenas.
-     * Fixing the bound here does not fix that; per-slot allocator state is
-     * part of S1's multi-slot arena work, recorded rather than half-done. */
+     * The pool's state lives in the slot now [S1 done], so this bound and
+     * the free list it guards belong to the same module. */
     module_t *owner = mdl_caller_slot();
     if (owner == NULL) {
         return;
     }
-    if (!ptr_in_range((uintptr_t)p, sizeof(free_block_t),
+    /* The header sits in front of what the caller was given, so validate
+     * from there -- a pointer whose header would fall outside the pool was
+     * never one of ours. */
+    uintptr_t hdr = (uintptr_t)p - BLK_HDR_SIZE;
+    if (hdr < owner->heap_stack_lo ||
+        !ptr_in_range(hdr, BLK_HDR_SIZE,
                        owner->heap_stack_lo, owner->heap_stack_lo + MDL_HEAP_SIZE)) {
         return;
     }
-    free_block_t *b = (free_block_t *)p;
-    b->size = 0;
-    b->next = g_free_list;
-    g_free_list = b;
+    free_block_t *b = (free_block_t *)hdr;
+    /* size is NOT touched: it is what alloc() recorded, and it is the
+     * whole reason this block can be handed out again. */
+    b->next = pool_free_list(owner);
+    pool_set_free_list(owner, b);
 }
 
 void host_free(void *p) MDL_SYSCALL_GATE;

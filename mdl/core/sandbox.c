@@ -13,11 +13,13 @@
 #include "sandbox.h"
 #include "arch_if.h"
 #include "registry.h"
+#include "buddy.h"
 
 extern uint8_t __mdl_text_start[], __mdl_text_end[];
 extern uint8_t __mdl_data_start[], __mdl_data_end[];
 extern uint8_t __mdl_heap_stack_start[], __mdl_heap_stack_end[];
 extern uint8_t __mdl_guard_start[], __mdl_guard_end[];
+extern uint8_t __mdl_pool_start[], __mdl_pool_end[];
 
 void sandbox_bounds_init(void)
 {
@@ -34,6 +36,15 @@ void sandbox_bounds_init(void)
     g_mdl_slot.heap_stack_hi = (uintptr_t)__mdl_heap_stack_end;
     g_mdl_slot.guard_lo      = (uintptr_t)__mdl_guard_start;
     g_mdl_slot.guard_hi      = (uintptr_t)__mdl_guard_end;
+
+    /* S1: hand the arena to the allocator.
+     *
+     * The fixed bounds above still describe the one module the loader
+     * carves out of the pool's front, so both views agree today. They stop
+     * agreeing the moment a second module is loaded, which is why the rest
+     * of S1 moves the loader onto mdl_buddy_alloc() rather than leaving two
+     * descriptions of the same memory to drift apart. */
+    mdl_buddy_init((uintptr_t)__mdl_pool_start);
 }
 
 void sandbox_init(void)

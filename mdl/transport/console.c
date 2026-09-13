@@ -4,6 +4,7 @@
 #include "protocol.h"
 #include "registry.h"
 #include "host_api.h"
+#include "buddy.h"
 #include "supervisor.h"
 #include "module_task.h"
 #include "at32f435_437.h"
@@ -225,6 +226,7 @@ static void cmd_help(void)
         "  pins              gpio pins, and who owns each one\r\n"
         "  adc               adc channels, and which pin each one is\r\n"
         "  spi               spi buses, their pins and current settings\r\n"
+        "  buddy             arena allocator: free space and self-test\r\n"
         "  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)\r\n"
         "  btn <i>           read whitelisted input pin i\r\n"
         "  mem <addr> [n]    dump n words (default 8) from addr\r\n"
@@ -461,6 +463,38 @@ static void cmd_arena(void)
 /* Same purpose as `adc`: answer "where do I connect?" from a terminal,
  * without writing an MDL and without trusting that board_pins.def matches
  * whatever firmware is actually on the device. */
+/*
+ * Run the arena allocator's self-check here, on the device.
+ *
+ * The allocator could be unit-tested on a host, and that would prove the
+ * logic. It would not prove the thing that has bitten this project
+ * repeatedly: that the code behaves the same once it is compiled for this
+ * target, linked against this firmware, and running with this MPU
+ * configuration. Same rule as everywhere else here -- compiling is not
+ * finishing.
+ */
+static void cmd_buddy(void)
+{
+    char detail[96];
+    int fails = mdl_buddy_selftest(detail, sizeof(detail));
+
+    size_t total = 0, largest = 0;
+    mdl_buddy_stats(&total, &largest);
+
+    mdl_console_puts("arena: ");
+    put_u32((uint32_t)(total / 1024u));
+    mdl_console_puts("K free, largest block ");
+    put_u32((uint32_t)(largest / 1024u));
+    mdl_console_puts("K\r\n");
+
+    mdl_console_puts(fails == 0 ? "selftest OK: " : "selftest FAILED: ");
+    mdl_console_puts(detail);
+    mdl_console_puts("\r\n");
+    if (fails != 0) {
+        mdl_console_puts("  (a failure here means the allocator is wrong on THIS target, whatever it does elsewhere)\r\n");
+    }
+}
+
 static void cmd_spi(void)
 {
     int inst, mode;
@@ -632,6 +666,7 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "pins")   == 0) cmd_pins();
     else if (strcmp(argv[0], "adc")    == 0) cmd_adc();
     else if (strcmp(argv[0], "spi")    == 0) cmd_spi();
+    else if (strcmp(argv[0], "buddy")  == 0) cmd_buddy();
     else if (strcmp(argv[0], "led")    == 0) cmd_led(argc, argv);
     else if (strcmp(argv[0], "btn")    == 0) cmd_btn(argc, argv);
     else if (strcmp(argv[0], "mem")    == 0) cmd_mem(argc, argv);

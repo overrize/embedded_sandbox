@@ -60,6 +60,18 @@ struct module {
      */
     uint32_t last_active_tick;
 
+    /* This module's own heap [S1]. It used to be three module-level
+     * statics in host_api.c -- correct for exactly one slot, and wrong the
+     * instant there are two, because they would share one free list
+     * across two separate arenas. A module's allocator belongs to the
+     * module for the same reason its memory does.
+     *
+     * Untyped because free_block_t is private to host_api.c; only that
+     * file ever dereferences it. */
+    uint8_t *pool_next;
+    uint8_t *pool_end;
+    void    *free_list;
+
     /*
      * Tick until which the MDL is legitimately blocked inside the host
      * (delay_ms today; a blocking event wait once F1 lands), or 0.

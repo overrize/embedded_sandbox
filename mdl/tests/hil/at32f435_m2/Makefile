@@ -48,6 +48,7 @@ C_SRCS := \
   main.c \
   freertos_hooks.c \
   $(MDL)/core/registry.c \
+  $(MDL)/core/buddy.c \
   $(MDL)/core/loader.c \
   $(MDL)/core/crc32.c \
   $(MDL)/core/module_task.c \
