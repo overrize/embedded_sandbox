@@ -49,6 +49,7 @@ C_SRCS := \
   $(MDL)/core/registry.c \
   $(MDL)/core/sandbox.c \
   $(MDL)/core/buddy.c \
+  $(MDL)/core/arena.c \
   $(MDL)/arch/arm_cm4/mpu_armv7m.c \
   $(MDL)/arch/arm_cm4/fault_arm.c \
   $(MDL)/arch/arm_cm4/reloc_arm.c \

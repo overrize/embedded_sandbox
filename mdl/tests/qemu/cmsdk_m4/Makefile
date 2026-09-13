@@ -60,6 +60,8 @@ C_SRCS := \
   $(M2)/freertos_hooks.c \
   $(MDL)/core/registry.c \
   $(MDL)/core/loader.c \
+  $(MDL)/core/buddy.c \
+  $(MDL)/core/arena.c \
   $(MDL)/core/crc32.c \
   $(MDL)/core/module_task.c \
   $(MDL)/core/supervisor.c \

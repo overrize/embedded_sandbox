@@ -1,5 +1,7 @@
 #include <string.h>
 #include "loader.h"
+#include "arena.h"
+#include "buddy.h"
 #include "crc32.h"
 #include "arch_if.h"
 
@@ -153,14 +155,27 @@ mdl_load_status_t mdl_load_validate(const module_t *m, const void *image,
         return MDL_LOAD_ERR_ARCH_MISMATCH;
     }
 
-    if (hdr->text_size > (size_t)(m->text_hi - m->text_lo)) {
-        return MDL_LOAD_ERR_TEXT_TOO_BIG;
-    }
-
+    /* Against what the ARENA can supply, not against a fixed slab [S1].
+     *
+     * The old test compared the image to bounds the linker had fixed, so
+     * the answer was the same for every module and there could only ever
+     * be one. Now each module asks for what it actually needs, and the
+     * question becomes whether the pool can still place it.
+     *
+     * Still PURE: this decides nothing and takes nothing, exactly as F3
+     * requires -- a rejected image must leave a running module untouched.
+     * mdl_arena_acquire() is where memory changes hands. */
     size_t got_bytes = (size_t)hdr->got_count * 4u;
     size_t data_region_needed = got_bytes + hdr->data_size + hdr->bss_size;
-    if (data_region_needed > (size_t)(m->data_hi - m->data_lo)) {
+
+    if (mdl_buddy_block_size(hdr->text_size) == 0u) {
+        return MDL_LOAD_ERR_TEXT_TOO_BIG;
+    }
+    if (mdl_buddy_block_size(data_region_needed) == 0u) {
         return MDL_LOAD_ERR_DATA_TOO_BIG;
+    }
+    if (!mdl_arena_would_fit(hdr->text_size, data_region_needed, NULL)) {
+        return MDL_LOAD_ERR_TEXT_TOO_BIG;   /* arena full or fragmented */
     }
 
     /* Payload layout on disk: [text][data][got][reloc_table]. Offsets
@@ -227,6 +242,14 @@ mdl_load_status_t mdl_load(module_t *m, const void *image, size_t image_len,
     }
     m->res_count    = (uint8_t)hdr->res_count;
     m->gpio_claimed = claimed;
+    /* Take the memory only now, after validation has passed [S1]. */
+    const mdl_header_t *h = (const mdl_header_t *)image;
+    size_t want_text = h->text_size;
+    size_t want_data = (size_t)h->got_count * 4u + h->data_size + h->bss_size;
+    if (!mdl_arena_acquire(m, want_text, want_data)) {
+        return MDL_LOAD_ERR_TEXT_TOO_BIG;
+    }
+
     uint8_t *text_dst = (uint8_t *)m->text_lo;
     uint8_t *got_dst   = (uint8_t *)m->data_lo;
     uint8_t *data_dst  = got_dst + got_bytes;

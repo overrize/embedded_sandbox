@@ -433,6 +433,13 @@ static void cmd_clk(void)
 
 static void cmd_arena(void)
 {
+    /* An empty slot owns no memory at all now [S1], so say that rather
+     * than print four zero ranges and a note about their permissions. */
+    if (!g_mdl_slot.arena_held) {
+        mdl_console_puts("no module loaded -- the slot holds no arena blocks\r\n");
+        mdl_console_puts("(`buddy` shows what the pool has free)\r\n");
+        return;
+    }
     mdl_console_puts("text : ");
     put_hex32((uint32_t)g_mdl_slot.text_lo);
     mdl_console_puts(" .. ");

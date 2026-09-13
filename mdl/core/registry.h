@@ -25,6 +25,12 @@ struct module {
     uintptr_t data_lo, data_hi;
     uintptr_t heap_stack_lo, heap_stack_hi;
     uintptr_t guard_lo, guard_hi;
+
+    /* True while this module holds arena blocks from the buddy
+     * allocator [S1]. Without it, release could not tell a module that
+     * never loaded from one that did, and would free blocks it does
+     * not own -- handing another module's memory back to the pool. */
+    bool arena_held;
     void *entry; /* set at load time (M1); NULL while the slot is empty */
 
     /* M3: fault recovery + software watchdog bookkeeping.

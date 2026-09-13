@@ -1,4 +1,5 @@
 #include "supervisor.h"
+#include "arena.h"
 #include "host_api.h" /* g_host_api, host_api_pool_reset() -- supervisor.h
                         * deliberately does NOT pull this in, see its comment */
 #include "loader.h"
@@ -90,6 +91,11 @@ static void reclaim_module(void)
      * host_api_pool_reset() is idempotent; safe to call even if the
      * module never allocated anything. */
     host_api_pool_reset(&g_mdl_slot);
+
+    /* Hand the arena blocks back [S1]. After the task is gone and before
+     * the bounds are cleared: releasing while the module could still run
+     * would put its own memory back in the pool underneath it. */
+    mdl_arena_release(&g_mdl_slot);
     g_mdl_slot.state = MDL_SLOT_EMPTY;
     g_mdl_slot.entry = NULL;
     g_mdl_slot.last_active_tick = 0;

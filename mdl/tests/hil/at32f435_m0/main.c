@@ -42,7 +42,15 @@ int main(void)
     registry_init();
     sandbox_init();
 
-    volatile uint8_t *guard = (volatile uint8_t *)g_mdl_slot.guard_lo;
+    /* The LINKER's guard band, not g_mdl_slot's [S1].
+     *
+     * This test is about the static regions sandbox_init() programmes, and
+     * those come from the linker. The slot's guard_lo now describes a
+     * module's own heap/stack gap and is zero until one is loaded -- reading
+     * it here would poke address 0, which still faults and so would still
+     * look like a pass while proving nothing about the guard. */
+    extern uint8_t __mdl_guard_start[];
+    volatile uint8_t *guard = (volatile uint8_t *)__mdl_guard_start;
     g_probe_readback = *guard; /* expected: MemManage fault, never returns */
 
     /* Reaching here means the guard region did not actually block the

@@ -28,14 +28,22 @@ void sandbox_bounds_init(void)
      * somewhere authoritative to read them from. The slot itself stays
      * MDL_SLOT_EMPTY -- bounds being known is not the same as a module
      * being loaded. */
-    g_mdl_slot.text_lo       = (uintptr_t)__mdl_text_start;
-    g_mdl_slot.text_hi       = (uintptr_t)__mdl_text_end;
-    g_mdl_slot.data_lo       = (uintptr_t)__mdl_data_start;
-    g_mdl_slot.data_hi       = (uintptr_t)__mdl_data_end;
-    g_mdl_slot.heap_stack_lo = (uintptr_t)__mdl_heap_stack_start;
-    g_mdl_slot.heap_stack_hi = (uintptr_t)__mdl_heap_stack_end;
-    g_mdl_slot.guard_lo      = (uintptr_t)__mdl_guard_start;
-    g_mdl_slot.guard_hi      = (uintptr_t)__mdl_guard_end;
+    /* Zero, not the linker's slab [S1].
+     *
+     * A module's bounds now exist only while it holds arena blocks, and
+     * that is load-bearing rather than tidy: ptr_owned_by_module() and
+     * fault classification both read these, so pre-filling them with a
+     * region nobody owns would make an EMPTY slot look like it owned 32K
+     * of memory. mdl_arena_acquire() fills them in. */
+    g_mdl_slot.text_lo       = 0;
+    g_mdl_slot.text_hi       = 0;
+    g_mdl_slot.data_lo       = 0;
+    g_mdl_slot.data_hi       = 0;
+    g_mdl_slot.heap_stack_lo = 0;
+    g_mdl_slot.heap_stack_hi = 0;
+    g_mdl_slot.guard_lo      = 0;
+    g_mdl_slot.guard_hi      = 0;
+    g_mdl_slot.arena_held    = false;
 
     /* S1: hand the arena to the allocator.
      *
