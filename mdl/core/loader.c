@@ -62,8 +62,10 @@ const char *mdl_load_detail(void)
  * is right for the bare M0/M1 targets that have no competing hardware.
  */
 __attribute__((weak)) bool mdl_res_check(const mdl_res_t *res, uint32_t count,
+                                          const module_t *exclude,
                                           char *detail, uint32_t detail_len)
 {
+    (void)exclude;
     (void)res;
     (void)count;
     (void)detail_len;
@@ -83,7 +85,8 @@ __attribute__((weak)) bool mdl_res_check(const mdl_res_t *res, uint32_t count,
  * the MDL still running. mdl_load() records them afterwards instead.
  */
 static mdl_load_status_t check_resources(const mdl_res_t *res,
-                                          uint32_t count)
+                                          uint32_t count,
+                                          const module_t *dest)
 {
 
     if (count > MDL_MAX_RES) {
@@ -109,7 +112,11 @@ static mdl_load_status_t check_resources(const mdl_res_t *res,
     /* One call, after the per-claim sanity checks: the host expands every
      * claim to physical pins and compares THOSE, which is the only way
      * two differently-named claims on one pin get noticed. */
-    if (!mdl_res_check(res, count, g_detail, (uint32_t)sizeof(g_detail))) {
+    /* `m` is the slot this image is destined for, and it is excluded
+     * from the cross-slot check [S2]: during a hot replace the module
+     * being replaced still holds its pins, and without this it would
+     * conflict with itself. */
+    if (!mdl_res_check(res, count, dest, g_detail, (uint32_t)sizeof(g_detail))) {
         return MDL_LOAD_ERR_RES_CONFLICT;
     }
 
@@ -203,7 +210,7 @@ mdl_load_status_t mdl_load_validate(const module_t *m, const void *image,
     }
 
     mdl_load_status_t res_st = check_resources(
-        (const mdl_res_t *)(payload + hdr->res_off), hdr->res_count);
+        (const mdl_res_t *)(payload + hdr->res_off), hdr->res_count, m);
     if (res_st != MDL_LOAD_OK) {
         return res_st;
     }

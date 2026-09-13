@@ -249,7 +249,41 @@ static const char *kind_name(uint8_t kind)
     }
 }
 
+/*
+ * Does a module already loaded hold this physical pin? [S2]
+ *
+ * This is the question that did not exist while there was one slot, and
+ * it is the dangerous one: two modules driving the same wire is not a
+ * refused load, it is two outputs fighting on a board. Everything needed
+ * to answer it was already here -- R3 expands a declaration to pins so
+ * that claims with different names can be compared by wire -- so the
+ * change is the search WIDTH, not the semantics.
+ */
+static const char *pin_held_by_module(uint8_t pin, const module_t *exclude,
+                                       const char **holder_name)
+{
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        const module_t *m = &g_mdl_slots[i];
+        if (m->state == MDL_SLOT_EMPTY || m == exclude) {
+            continue;
+        }
+        for (uint8_t r = 0; r < m->res_count; r++) {
+            uint8_t     pins[4];
+            const char *what = "(unnamed)";
+            uint8_t     n = res_pins(&m->res[r], pins, &what);
+            for (uint8_t k = 0; k < n; k++) {
+                if (pins[k] == pin) {
+                    *holder_name = what;
+                    return (m->name[0] != 0) ? m->name : "another module";
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
 bool mdl_res_check(const mdl_res_t *res, uint32_t count,
+                    const module_t *exclude,
                     char *detail, uint32_t detail_len)
 {
     /* Every pin claimed so far, and by which claim, so a collision can be
@@ -282,6 +316,24 @@ bool mdl_res_check(const mdl_res_t *res, uint32_t count,
                 w = put_pin(w, end, pins[k]);
                 w = put_str(w, end, ", held by ");
                 w = put_str(w, end, o->who);
+                *w = 0;
+                return false;
+            }
+
+            /* Held by a module already resident [S2]. Checked before the
+             * self-conflict scan because it is the more surprising answer:
+             * a module can be read to find its own duplicate claim, but
+             * nothing in its source mentions the module next door. */
+            const char *other_what = "(unnamed)";
+            const char *other = pin_held_by_module(pins[k], exclude, &other_what);
+            if (other != NULL) {
+                w = put_str(w, end, name);
+                w = put_str(w, end, " needs ");
+                w = put_pin(w, end, pins[k]);
+                w = put_str(w, end, ", already held by ");
+                w = put_str(w, end, other);
+                w = put_str(w, end, " for ");
+                w = put_str(w, end, other_what);
                 *w = 0;
                 return false;
             }

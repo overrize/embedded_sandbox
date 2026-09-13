@@ -1,6 +1,7 @@
 #ifndef MDL_REGISTRY_H
 #define MDL_REGISTRY_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include "mdl_format.h" /* MDL_CMD_NAME_MAX, mdl_res_t */
@@ -135,7 +136,37 @@ struct module {
 typedef struct module module_t;
 
 /* v1: exactly one module slot. */
-extern module_t g_mdl_slot;
+/*
+ * THE SLOT TABLE [S2].
+ *
+ * Four, and the number is a policy rather than a limit the hardware
+ * imposes: MPU regions are per-task and reprogrammed on every context
+ * switch, so the MPU does not cap how many modules can be resident. What
+ * caps it is arena space, and four 10K modules against a 128K pool leaves
+ * room to spare. Raising it costs one constant and more RAM.
+ *
+ * MIGRATION NOTE. Most of this codebase was written when there was one
+ * module and says so in a hundred places. Rather than rename all of them
+ * at once -- which would be a large, unreviewable change to code that
+ * includes the MPU setup where H12 lived -- the single-module targets
+ * (M0..M3, the QEMU self-tests) keep using `g_mdl_slot` and it means slot
+ * zero. Code that genuinely has to be multi-slot aware -- caller
+ * identity, arbitration, the supervisor -- walks the table.
+ *
+ * The macro is deliberately ugly so it reads as transitional.
+ */
+#define MDL_MAX_SLOTS 4
+
+extern module_t g_mdl_slots[MDL_MAX_SLOTS];
+
+/* Transitional alias for single-module code paths; see above. */
+#define g_mdl_slot (g_mdl_slots[0])
+
+/* Iterate every slot that currently holds a module. */
+#define MDL_FOR_EACH_LOADED(mvar)                                        \
+    for (module_t *mvar = &g_mdl_slots[0];                               \
+         mvar < &g_mdl_slots[MDL_MAX_SLOTS]; mvar++)                     \
+        if (mvar->state != MDL_SLOT_EMPTY)
 
 /*
  * WHICH MDL IS CALLING? [S0]
@@ -157,6 +188,13 @@ extern module_t g_mdl_slot;
  * own entries, like host_gpio_direct_set().
  */
 module_t *mdl_caller_slot(void);
+
+/* Slot number of a module, for layers that key tables by index rather
+ * than by pointer -- the event layer's per-slot queues, mainly. */
+static inline int mdl_slot_index(const module_t *m)
+{
+    return (m == NULL) ? -1 : (int)(m - &g_mdl_slots[0]);
+}
 
 /* Did the calling MDL declare this resource? One implementation for every
  * driver, because four near-identical copies of a permission check is how

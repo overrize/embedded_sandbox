@@ -313,21 +313,22 @@ int mdl_post_module_command(module_t *m, int argc, const char *const *argv)
     s_cmd_argc = argc;
     s_cmd_argv = (const char *const *)out_argv;
     m->cmd_pending = 1u;
-    return mdl_events_post_console() ? 1 : 0;
+    return mdl_events_post_console(mdl_slot_index(m)) ? 1 : 0;
 }
 
 module_t *mdl_caller_slot(void)
 {
     TaskHandle_t me = xTaskGetCurrentTaskHandle();
 
-    /* One slot today, so this is a single comparison. It is written as a
-     * lookup rather than as `return &g_mdl_slot` precisely so that the
-     * shape is already right when there are several -- the callers do not
-     * change again when that happens. */
-    if (g_mdl_slot.state != MDL_SLOT_EMPTY &&
-        g_mdl_slot.task_handle != NULL &&
-        (TaskHandle_t)g_mdl_slot.task_handle == me) {
-        return &g_mdl_slot;
+    /* Walks the whole table now [S2]. S0 wrote this as a lookup rather
+     * than `return &g_mdl_slot` for exactly this moment: not one caller
+     * of mdl_caller_slot() had to change when the table grew. */
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        module_t *m = &g_mdl_slots[i];
+        if (m->state != MDL_SLOT_EMPTY && m->task_handle != NULL &&
+            (TaskHandle_t)m->task_handle == me) {
+            return m;
+        }
     }
     return NULL;
 }

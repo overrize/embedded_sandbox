@@ -28,23 +28,37 @@
 /* Arm/disarm. Called from the loader (privileged, module not yet running)
  * and from reclaim_module(). Disarm is not optional: an interrupt still
  * pointing at an unloaded MDL is a wake for a task that no longer exists. */
-bool mdl_events_arm_gpio(int pin, uint8_t edge);
-void mdl_events_disarm_all(void);
+/*
+ * PER SLOT, NOT GLOBAL [S2/S3].
+ *
+ * Every one of these used to be implicitly about "the" module. The
+ * disarm in particular: reclaiming one slot called disarm_all(), which
+ * with two modules resident would silently take the other one's button
+ * away. That is why S3 turned out to be a prerequisite of multi-slot
+ * loading rather than a follow-on -- see the plan's ordering note.
+ */
+bool mdl_events_arm_gpio(int slot, int pin, uint8_t edge);
+
+/* Only this slot's lines. A slot that armed nothing is a no-op. */
+void mdl_events_disarm_slot(int slot);
 
 /* Called by the loader once the MDL's declared budget is known. */
-void mdl_events_reset(uint16_t depth, uint16_t rate_hz, void *module_task_handle);
+void mdl_events_reset(int slot, uint16_t depth, uint16_t rate_hz,
+                       void *module_task_handle);
 
 /*
  * Take the oldest event, or false if none. Runs in the module task
  * through the syscall gate (module_task.c), so `out` points into module
  * memory and the copy happens while privileged.
  */
+/* Takes from the CALLING module's queue -- identity comes from the task,
+ * the same way every other gated call decides whose resources these are. */
 bool mdl_events_take(mdl_event_t *out);
 
 /* Queue a console command for the resident task, so commands and hardware
  * events arrive through one path. An MDL cannot both block waiting for an
  * event and be restarted to run a command, so there is one queue. */
-bool mdl_events_post_console(void);
+bool mdl_events_post_console(int slot);
 
 /* Bytes landed on a UART. Called from its receive ISR; coalesces with
  * any pending event for the same instance, which is what keeps a busy
@@ -60,6 +74,11 @@ typedef struct {
     uint32_t peak_hz;     /* highest rate seen in any 1s window */
 } mdl_events_stats_t;
 
-void mdl_events_get_stats(mdl_events_stats_t *out);
+void mdl_events_get_stats(int slot, mdl_events_stats_t *out);
+
+/* Clear the pin->slot map and every slot's queue. Called once at boot;
+ * without it the map starts as zeros, which reads as 'slot 0 owns every
+ * pin' rather than 'nobody does'. */
+void mdl_events_init(void);
 
 #endif /* MDL_HOST_EVENTS_H */

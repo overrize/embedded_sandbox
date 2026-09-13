@@ -68,6 +68,9 @@ void mdl_supervisor_restore(void)
 
 void mdl_supervisor_init(void)
 {
+    /* Before anything can arm a pin: the map starts as zeros, which would
+     * read as "slot 0 owns every pin" rather than "nobody does". */
+    mdl_events_init();
     s_supervisor_handle = xTaskGetCurrentTaskHandle();
     mdl_proto_set_supervisor_handle((void *)s_supervisor_handle);
     mdl_console_set_supervisor_handle((void *)s_supervisor_handle);
@@ -114,7 +117,10 @@ static void reclaim_module(void)
      * no record of which pins to hand back. */
     /* Disarm BEFORE the task handle goes stale: a late edge arriving
      * after the task is deleted would notify a task that is gone. */
-    mdl_events_disarm_all();
+    /* Only this slot's lines [S2/S3]. disarm_all() here would take a
+     * neighbouring module's button away as a side effect of unloading
+     * this one -- silently, and long after the cause. */
+    mdl_events_disarm_slot(mdl_slot_index(&g_mdl_slot));
 
     /* Release peripherals before the claims are cleared, same ordering
      * reason as the GPIO release below. */
@@ -205,12 +211,13 @@ static bool start_loaded_module(void)
     }
     /* Arm interrupts only now: the ISR notifies the module task, so the
      * task has to exist first. */
-    mdl_events_reset(g_mdl_slot.evt_queue_depth, g_mdl_slot.evt_rate_hz,
-                      g_mdl_slot.task_handle);
+    mdl_events_reset(mdl_slot_index(&g_mdl_slot), g_mdl_slot.evt_queue_depth,
+                      g_mdl_slot.evt_rate_hz, g_mdl_slot.task_handle);
     for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
         if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_GPIO &&
             g_mdl_slot.res[i].edge != (uint8_t)MDL_EDGE_NONE) {
-            (void)mdl_events_arm_gpio((int)g_mdl_slot.res[i].id,
+            (void)mdl_events_arm_gpio(mdl_slot_index(&g_mdl_slot),
+                                       (int)g_mdl_slot.res[i].id,
                                        g_mdl_slot.res[i].edge);
         }
         /* A declared bus is brought up here, not on first use: an MDL

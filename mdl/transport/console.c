@@ -372,7 +372,7 @@ static void cmd_status(void)
 
     if (g_mdl_slot.state != MDL_SLOT_EMPTY && g_mdl_slot.evt_entry != NULL) {
         mdl_events_stats_t ev;
-        mdl_events_get_stats(&ev);
+        mdl_events_get_stats(mdl_slot_index(&g_mdl_slot), &ev);
         mdl_console_puts("\r\nevents : ");
         put_u32(ev.delivered);
         mdl_console_puts(" delivered, ");

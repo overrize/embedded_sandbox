@@ -5,7 +5,7 @@
 #include "arch_if.h"
 #include <stddef.h>
 
-module_t g_mdl_slot;
+module_t g_mdl_slots[MDL_MAX_SLOTS];
 mdl_fault_info_t g_mdl_last_fault;
 
 /*
@@ -27,6 +27,14 @@ __attribute__((weak)) void mdl_supervisor_wake_from_isr(void)
 
 void registry_init(void)
 {
+    /* Every slot, not just the first: a half-initialised table would let
+     * mdl_caller_slot() match garbage against a live task handle. */
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        g_mdl_slots[i].state = MDL_SLOT_EMPTY;
+        g_mdl_slots[i].entry = NULL;
+        g_mdl_slots[i].task_handle = NULL;
+        g_mdl_slots[i].arena_held = false;
+    }
     g_mdl_slot.state = MDL_SLOT_EMPTY;
     g_mdl_slot.entry = NULL;
     g_mdl_slot.task_handle = NULL;
@@ -80,20 +88,23 @@ __attribute__((weak)) bool mdl_events_take(mdl_event_t *out)
     return false;
 }
 
-__attribute__((weak)) bool mdl_events_post_console(void)
+__attribute__((weak)) bool mdl_events_post_console(int slot)
 {
+    (void)slot;
     return false;
 }
 
-__attribute__((weak)) bool mdl_events_arm_gpio(int pin, uint8_t edge)
+__attribute__((weak)) bool mdl_events_arm_gpio(int slot, int pin, uint8_t edge)
 {
+    (void)slot;
     (void)pin;
     (void)edge;
     return false;
 }
 
-__attribute__((weak)) void mdl_events_get_stats(mdl_events_stats_t *out)
+__attribute__((weak)) void mdl_events_get_stats(int slot, mdl_events_stats_t *out)
 {
+    (void)slot;
     out->delivered = 0;
     out->lost = 0;
     out->coalesced = 0;
@@ -101,13 +112,20 @@ __attribute__((weak)) void mdl_events_get_stats(mdl_events_stats_t *out)
     out->peak_hz = 0;
 }
 
-__attribute__((weak)) void mdl_events_disarm_all(void)
+__attribute__((weak)) void mdl_events_disarm_slot(int slot)
+{
+    (void)slot;
+}
+
+__attribute__((weak)) void mdl_events_init(void)
 {
 }
 
-__attribute__((weak)) void mdl_events_reset(uint16_t depth, uint16_t rate_hz,
+__attribute__((weak)) void mdl_events_reset(int slot, uint16_t depth,
+                                             uint16_t rate_hz,
                                              void *module_task_handle)
 {
+    (void)slot;
     (void)depth;
     (void)rate_hz;
     (void)module_task_handle;
