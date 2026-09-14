@@ -319,17 +319,36 @@ void console_put_u32(uint32_t v)
 
 static void cmd_persist(void)
 {
-    uint32_t len = 0;
-    const void *img = board_persist_image(&len);
-    if (img == NULL) {
+    /* The whole set [S5]. Reporting only the first would be the same
+     * failure the store itself used to have: a board that says it kept
+     * something, while quietly having kept less than it was given. */
+    uint32_t n = board_persist_count();
+    if (n == 0u) {
         mdl_console_puts("stored : nothing -- this board comes up empty\r\n");
         return;
     }
+
+    uint32_t total = 0;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t len = 0;
+        const void *img = board_persist_entry(k, &len);
+        if (img == NULL) {
+            continue;
+        }
+        total += len;
+        mdl_console_puts("  ");
+        put_u32(k);
+        mdl_console_puts(": ");
+        put_u32(len);
+        mdl_console_puts(" bytes at ");
+        put_hex32((uint32_t)(uintptr_t)img);
+        mdl_console_puts("\r\n");
+    }
     mdl_console_puts("stored : ");
-    put_u32(len);
-    mdl_console_puts(" bytes at ");
-    put_hex32((uint32_t)(uintptr_t)img);
-    mdl_console_puts("  (reloaded every boot)\r\n");
+    put_u32(n);
+    mdl_console_puts(" image(s), ");
+    put_u32(total);
+    mdl_console_puts(" bytes -- restored in order at boot\r\n");
 }
 
 static void cmd_forget(void)

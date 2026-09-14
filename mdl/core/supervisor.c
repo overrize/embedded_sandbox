@@ -18,6 +18,12 @@
  * difference that would only ever show at a customer site. */
 static bool start_loaded_module(module_t *slot);
 
+/* Slot selection, defined below. Declared here because boot restore needs
+ * them and runs before them in the file. */
+static module_t *find_slot_by_name(const char *name);
+static module_t *find_free_slot(void);
+static module_t *find_slot_by_command(const char *cmd);
+
 
 static TaskHandle_t s_supervisor_handle;
 
@@ -36,40 +42,55 @@ static TaskHandle_t s_supervisor_handle;
  */
 void mdl_supervisor_restore(void)
 {
-    uint32_t len = 0;
-    const void *image = board_persist_image(&len);
-    if (image == NULL) {
-        return;
-    }
-
-    /* Slot zero: this runs at boot with nothing else loaded, so there is
-     * no choice to make. F2 saves one image; restoring a SET of them is
-     * S5's job, and pretending to pick a slot here would suggest it
-     * already works. */
-    module_t *slot = &g_mdl_slots[0];
-
-    mdl_load_status_t st = mdl_load(slot, image, len,
-                                     HOST_API_ABI_VERSION, MDL_ARCH_ARMV7M);
-    if (st != MDL_LOAD_OK) {
-        mdl_console_puts("[host] saved MDL rejected at boot: ");
-        mdl_console_puts(mdl_load_status_str(st));
-        const char *detail = mdl_load_detail();
-        if (detail[0] != 0) {
-            mdl_console_puts(": ");
-            mdl_console_puts(detail);
+    /*
+     * Every saved image, not the saved image [S5].
+     *
+     * A board that comes back running one of the three modules it had is
+     * not a board that survived a power cut -- it is a board that lost two
+     * thirds of itself and did not say so.
+     *
+     * Each goes through the ordinary load path, so a restored module is
+     * relocated and arbitrated exactly like a pushed one. A stored image
+     * that has become unloadable (a firmware whose ABI moved on, a pin now
+     * taken by an earlier entry) is reported and skipped rather than
+     * aborting the rest: losing one module should not cost the others.
+     */
+    uint32_t n = board_persist_count();
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t len = 0;
+        const void *image = board_persist_entry(k, &len);
+        if (image == NULL) {
+            continue;
         }
-        mdl_console_puts("\r\n");
-        slot->state = MDL_SLOT_EMPTY;
-        return;
-    }
 
-    if (!start_loaded_module(slot)) {
-        slot->state = MDL_SLOT_EMPTY;
-        return;
+        module_t *slot = find_free_slot();
+        if (slot == NULL) {
+            mdl_console_puts("[host] more saved MDLs than slots; stopping\r\n");
+            return;
+        }
+
+        mdl_load_status_t st = mdl_load(slot, image, len,
+                                         HOST_API_ABI_VERSION, MDL_ARCH_ARMV7M);
+        if (st != MDL_LOAD_OK) {
+            mdl_console_puts("[host] saved MDL rejected at boot: ");
+            mdl_console_puts(mdl_load_status_str(st));
+            const char *detail = mdl_load_detail();
+            if (detail[0] != 0) {
+                mdl_console_puts(": ");
+                mdl_console_puts(detail);
+            }
+            mdl_console_puts("\r\n");
+            slot->state = MDL_SLOT_EMPTY;
+            continue;
+        }
+        if (!start_loaded_module(slot)) {
+            slot->state = MDL_SLOT_EMPTY;
+            continue;
+        }
+        mdl_console_puts("[host] restored: ");
+        mdl_console_puts(slot->name);
+        mdl_console_puts("\r\n");
     }
-    mdl_console_puts("[host] restored saved MDL: ");
-    mdl_console_puts(slot->name);
-    mdl_console_puts("\r\n");
 }
 
 void mdl_supervisor_init(void)

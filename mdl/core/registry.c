@@ -158,8 +158,14 @@ __attribute__((weak)) void mdl_events_reset(int slot, uint16_t depth,
  * the real ones; a target with no flash store keeps these and simply
  * never has anything saved. Same pattern as the event-layer stubs above.
  */
-__attribute__((weak)) const void *board_persist_image(uint32_t *out_len)
+__attribute__((weak)) uint32_t board_persist_count(void)
 {
+    return 0u;
+}
+
+__attribute__((weak)) const void *board_persist_entry(uint32_t i, uint32_t *out_len)
+{
+    (void)i;
     (void)out_len;
     return NULL;
 }
