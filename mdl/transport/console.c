@@ -131,6 +131,18 @@ static void put_u32(uint32_t v)
     mdl_console_puts(&buf[i]);
 }
 
+/* Two hex digits. Separate from put_hex32 because a byte printed as eight
+ * digits is unreadable in a dump, which is the only place this is used. */
+static void put_hex8(uint8_t v)
+{
+    static const char d[] = "0123456789ABCDEF";
+    char out[3];
+    out[0] = d[(v >> 4) & 0xF];
+    out[1] = d[v & 0xF];
+    out[2] = 0;
+    mdl_console_puts(out);
+}
+
 static void put_hex32(uint32_t v)
 {
     static const char digits[] = "0123456789ABCDEF";
@@ -228,6 +240,7 @@ static void cmd_help(void)
         "  spi               spi buses, their pins and current settings\r\n"
         "  buddy             arena allocator: free space and self-test\r\n"
         "  slots            which modules are resident, and what each owns\r\n"
+        "  i2c scan|read|write   talk to an I2C device from here, no MDL needed\r\n"
         "  evt <pin> [n]   fire a pin's interrupt from software (no button needed)\r\n"
         "  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)\r\n"
         "  btn <i>           read whitelisted input pin i\r\n"
@@ -551,6 +564,133 @@ static void cmd_evt(int argc, char **argv)
  * tool that speaks it. This is the human-facing view, and it exists
  * because with four slots "is it loaded" stops being a yes/no question.
  */
+/* One place that turns a transfer result into words. Each code points at a
+ * different thing to check, which is why they were kept apart in the first
+ * place -- collapsing them here would undo that. */
+static void shell_i2c_err(int r)
+{
+    switch (r) {
+    case -4:
+        mdl_console_puts("that bus belongs to a loaded module -- unload it first");
+        break;
+    case -2:
+        mdl_console_puts("no answer (wrong address? not powered? no pull-ups?)");
+        break;
+    case -3:
+        mdl_console_puts("the transfer started and failed (NACK or bus error)");
+        break;
+    default:
+        mdl_console_puts("refused (no such bus on this board?)");
+        break;
+    }
+    mdl_console_puts("\r\n");
+}
+
+/*
+ * `i2c scan|read|write` -- the hardware shell [W2].
+ *
+ * This is the part of a REPL that embedded work actually uses: try a
+ * transfer against a device, right now, without writing anything first.
+ *
+ * The OPERATIONS are pre-compiled and only the ARGUMENTS are runtime, which
+ * is why this needs no interpreter -- and equally why it cannot do the other
+ * thing a REPL does, which is evaluate an expression against a module's own
+ * live state. That half is what S8's interpreter-as-a-module is for.
+ *
+ * Before this, scanning a bus meant writing, compiling and pushing an MDL.
+ */
+static void cmd_i2c(int argc, char **argv)
+{
+    if (argc < 2) {
+        mdl_console_puts("usage: i2c scan <bus>\r\n"
+                          "       i2c read <bus> <addr7> <n>\r\n"
+                          "       i2c write <bus> <addr7> <byte> [byte...]\r\n");
+        return;
+    }
+
+    uint32_t bus = 0;
+    if (argc < 3 || !parse_u32(argv[2], &bus)) {
+        mdl_console_puts("which bus? try `i2c scan 1`\r\n");
+        return;
+    }
+
+    uint8_t buf[16];
+
+    if (strcmp(argv[1], "scan") == 0) {
+        int found = 0;
+        for (int a = 0x08; a <= 0x77; a++) {
+            int r = host_i2c_shell((int)bus, a, NULL, 0, buf, 1);
+            if (r == -4 || r == -1) {
+                shell_i2c_err(r);
+                return;
+            }
+            if (r == 0) {
+                mdl_console_puts("  device at 0x");
+                put_hex8((uint8_t)a);
+                mdl_console_puts("\r\n");
+                found++;
+            }
+        }
+        put_u32((uint32_t)found);
+        mdl_console_puts(" device(s)\r\n");
+        return;
+    }
+
+    uint32_t addr = 0;
+    if (argc < 4 || !parse_u32(argv[3], &addr) || addr > 0x7Fu) {
+        mdl_console_puts("address must be 0..0x7F -- the 7-bit form, as printed "
+                          "on a datasheet\r\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "read") == 0) {
+        uint32_t n = 1;
+        if (argc >= 5 && !parse_u32(argv[4], &n)) {
+            n = 1;
+        }
+        if (n == 0u || n > sizeof(buf)) {
+            n = sizeof(buf);
+        }
+        int r = host_i2c_shell((int)bus, (int)addr, NULL, 0, buf, n);
+        if (r != 0) {
+            shell_i2c_err(r);
+            return;
+        }
+        for (uint32_t k = 0; k < n; k++) {
+            put_hex8(buf[k]);
+            mdl_console_puts(" ");
+        }
+        mdl_console_puts("\r\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "write") == 0) {
+        uint32_t n = 0;
+        for (int k = 4; k < argc && n < sizeof(buf); k++) {
+            uint32_t v = 0;
+            if (!parse_u32(argv[k], &v)) {
+                break;
+            }
+            buf[n++] = (uint8_t)v;
+        }
+        if (n == 0u) {
+            mdl_console_puts("nothing to write\r\n");
+            return;
+        }
+        int r = host_i2c_shell((int)bus, (int)addr, buf, n, NULL, 0);
+        if (r != 0) {
+            shell_i2c_err(r);
+            return;
+        }
+        put_u32(n);
+        mdl_console_puts(" byte(s) written\r\n");
+        return;
+    }
+
+    mdl_console_puts("i2c what? scan / read / write\r\n");
+}
+
+
 static void cmd_slots(void)
 {
     int live = 0;
@@ -791,6 +931,7 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "spi")    == 0) cmd_spi();
     else if (strcmp(argv[0], "buddy")  == 0) cmd_buddy();
     else if (strcmp(argv[0], "slots")  == 0) cmd_slots();
+    else if (strcmp(argv[0], "i2c")    == 0) cmd_i2c(argc, argv);
     else if (strcmp(argv[0], "evt")    == 0) cmd_evt(argc, argv);
     else if (strcmp(argv[0], "led")    == 0) cmd_led(argc, argv);
     else if (strcmp(argv[0], "btn")    == 0) cmd_btn(argc, argv);

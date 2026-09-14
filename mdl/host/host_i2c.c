@@ -208,6 +208,86 @@ void host_i2c_release(int instance)
     b->open = false;
 }
 
+/* Defined below; the shell half needs them and comes first so it sits
+ * next to the claim/release it wraps. */
+static void bus_recover(i2c_bus_t *b);
+static int status_to_ret(i2c_status_type st);
+
+/* ---- the host shell's half [W2] -------------------------------------- */
+
+/*
+ * Poking the bus from the console.
+ *
+ * WHY THIS IS NOT THE MODULE PATH. checked_bus() asks whether the
+ * CALLING MODULE declared this bus, and the console is not a module --
+ * it would be refused. But the deeper reason is the one the arbitration
+ * exists for: if a module holds I2C1 and the console transfers on it
+ * too, that is two masters interleaving on one wire. So these refuse a
+ * bus any module has claimed, rather than sharing it.
+ *
+ * Claim and release around each transfer rather than leaving the bus
+ * up: a shell command should not change what the next module finds.
+ */
+static bool shell_bus_free(int instance)
+{
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        const module_t *m = &g_mdl_slots[i];
+        if (m->state == MDL_SLOT_EMPTY) {
+            continue;
+        }
+        for (uint8_t r = 0; r < m->res_count; r++) {
+            if (m->res[r].kind == (uint8_t)MDL_RES_KIND_I2C &&
+                m->res[r].id == (uint8_t)instance) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+int host_i2c_shell(int bus, int addr7, const uint8_t *tx, uint32_t txlen,
+                    uint8_t *rx, uint32_t rxlen)
+{
+    if (!shell_bus_free(bus)) {
+        return -4;   /* a module owns it; sharing would be two masters */
+    }
+    i2c_bus_t *b = bus_lookup(bus);
+    if (b == NULL || addr7 < 0 || addr7 > 0x7F) {
+        return -1;
+    }
+    if (txlen > I2C_MAX_LEN || rxlen > I2C_MAX_LEN ||
+        (txlen == 0u && rxlen == 0u)) {
+        return -1;
+    }
+
+    bool was_open = b->open;
+    if (!was_open && !host_i2c_claim(bus)) {
+        return -1;
+    }
+
+    i2c_status_type st = I2C_OK;
+    if (txlen > 0u) {
+        st = i2c_master_transmit(b->handle, (uint16_t)(addr7 << 1),
+                                  (uint8_t *)tx, (uint16_t)txlen,
+                                  I2C_TIMEOUT_SPINS);
+        if (st != I2C_OK) {
+            bus_recover(b);
+        }
+    }
+    if (st == I2C_OK && rxlen > 0u) {
+        st = i2c_master_receive(b->handle, (uint16_t)(addr7 << 1),
+                                 rx, (uint16_t)rxlen, I2C_TIMEOUT_SPINS);
+        if (st != I2C_OK) {
+            bus_recover(b);
+        }
+    }
+
+    if (!was_open) {
+        host_i2c_release(bus);
+    }
+    return status_to_ret(st);
+}
+
 /* ---- the module-facing half ----------------------------------------- */
 
 /*

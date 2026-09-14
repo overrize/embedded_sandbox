@@ -235,6 +235,15 @@ __attribute__((weak)) uint32_t host_gpio_release_claims(uint32_t claimed)
  * target with no I2C hardware wired up simply never brings one up, and a
  * claim it cannot honour is reported at load rather than silently
  * granted. */
+/* Weak shell entry. -1 is 'refused', which is the truthful answer on a
+ * build with no I2C driver: there is no bus to talk to. */
+__attribute__((weak)) int host_i2c_shell(int bus, int addr7, const uint8_t *tx,
+                                          uint32_t txlen, uint8_t *rx, uint32_t rxlen)
+{
+    (void)bus; (void)addr7; (void)tx; (void)txlen; (void)rx; (void)rxlen;
+    return -1;
+}
+
 __attribute__((weak)) bool host_i2c_claim(int instance)
 {
     (void)instance;

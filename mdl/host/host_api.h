@@ -581,6 +581,13 @@ bool host_ptr_owned_by_module(const void *p, size_t len);
 
 /* Bring up / tear down an I2C bus an MDL has claimed. Called by the
  * supervisor around load and unload, alongside the GPIO equivalents. */
+/* Console-side I2C, for the hardware shell [W2]. Refuses a bus any module
+ * has claimed -- sharing one would be two masters on one wire -- and
+ * claims/releases around each transfer so a shell command does not change
+ * what the next module finds. Returns -4 for "a module owns it". */
+int host_i2c_shell(int bus, int addr7, const uint8_t *tx, uint32_t txlen,
+                    uint8_t *rx, uint32_t rxlen);
+
 bool host_i2c_claim(int instance);
 void host_i2c_release(int instance);
 bool host_uart_claim(int instance);
