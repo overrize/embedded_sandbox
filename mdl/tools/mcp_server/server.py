@@ -23,7 +23,8 @@ property of serial ports, not a limitation worth apologising for -- but it
 does mean the server should be stopped before going back to manual work.
 """
 import argparse
-import json
+import pathlib
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -118,6 +119,30 @@ TOOLS = [
             "line that faulted."
         ),
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "verification_status",
+        "description": (
+            "What has been VERIFIED ON HARDWARE versus what merely compiles. "
+            "This project distinguishes the two deliberately and the "
+            "distinction is load-bearing: 'done' means the code is in place, "
+            "'verified' means it was run on silicon and observed to work. "
+            "Treating the first as the second is how untested code gets "
+            "relied on. Parsed from maintain.md's claim board, which is the "
+            "single source of truth -- a second copy would drift from it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "only": {
+                    "type": "string",
+                    "description": (
+                        "Filter by status: verified | done | partial | "
+                        "unclaimed. Omit for everything."
+                    ),
+                },
+            },
+        },
     },
     {
         "name": "read_logs",
@@ -248,6 +273,106 @@ class Server:
                             "text; addr2line it against that module's .so. A null "
                             "offset means the fault was in host code, not the MDL.")
         return out
+
+    # Status words as maintain.md writes them, mapped to something an agent
+    # can branch on. The Chinese is the source of truth because that is what
+    # the document uses; translating in one place beats every caller
+    # guessing.
+    _STATUS = {
+        "已验证":     ("verified", "run on hardware and observed to work"),
+        "机制已验证": ("verified", "the mechanism was run on hardware"),
+        "完成":       ("done", "code is in place; NOT run on hardware"),
+        "部分完成":   ("partial", "some of it is verified, some is not"),
+        "进行中":     ("in_progress", "being worked on"),
+        "待认领":     ("unclaimed", "not started"),
+    }
+
+    def verification_status(self, args):
+        """
+        Parse maintain.md's claim board.
+
+        Reading the document rather than keeping a machine-readable copy is
+        the whole point: two lists of what is verified would disagree within
+        a week, and the one an agent reads would be the stale one. This is
+        slower and cannot drift.
+        """
+        root = pathlib.Path(__file__).resolve().parents[3]
+        doc = root / "maintain.md"
+        if not doc.exists():
+            return {"ok": False, "error": f"maintain.md not found at {doc}"}
+
+        """
+        Only the claim board, not every table in the file.
+
+        The first cut walked every markdown row and picked up the section-7
+        backlog too, whose columns mean something else -- so tasks that are
+        VERIFIED on the board came back as "unknown", and one line of prose
+        matched the id pattern by accident.
+
+        A tool that under-reports verification is worse than no tool: an
+        agent reading "unknown" for finished work will redo it, or worse,
+        distrust the parts that are right.
+        """
+        rows = []
+        in_board = False
+        for line in doc.read_text(encoding="utf-8").splitlines():
+            # Anchor on the TABLE HEADER, not the section.
+            #
+            # Section 8 holds two tables: a roadmap whose third column is an
+            # effort estimate, and the claim board whose fourth is a status.
+            # Anchoring on the "## 8" heading swept up both, so roadmap rows
+            # came back as status "unknown" for tasks the board records as
+            # verified -- under-reporting, which is the failure mode that
+            # makes an agent redo finished work.
+            #
+            # The claim board is the one with an owner column. That is a
+            # property of the table itself, so re-ordering the document
+            # cannot quietly change what gets parsed.
+            if line.startswith("|") and "负责" in line and "状态" in line:
+                in_board = True
+                continue
+            if line.startswith("#"):
+                in_board = False
+                continue
+            if not in_board or not line.startswith("|"):
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) < 4:
+                continue
+            ident = cells[0].strip("*` ")
+            if not re.fullmatch(r"[A-Z]+[0-9]+", ident):
+                continue
+            raw = cells[3].strip("*` ")
+            status, meaning = self._STATUS.get(raw, ("unknown", raw))
+            rows.append({
+                "id": ident,
+                "task": re.sub(r"[*`]", "", cells[1]).strip(),
+                "status": status,
+                "means": meaning,
+                "note": re.sub(r"[*`]", "", cells[-1]).strip()[:300],
+            })
+
+        want = args.get("only")
+        if want:
+            rows = [r for r in rows if r["status"] == want]
+
+        counts = {}
+        for r in rows:
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+
+        return {
+            "ok": True,
+            "source": str(doc),
+            "counts": counts,
+            "items": rows,
+            "caveat": (
+                "'done' is not 'verified'. A task marked done compiles and is "
+                "wired up; nobody has watched it work on the board. Do not "
+                "build on a done item as though it were verified -- this "
+                "project has repeatedly found bugs that six clean target "
+                "builds did not."
+            ),
+        }
 
     def read_logs(self, args):
         return {"ok": True, "lines": self.dev.logs(int(args.get("max_lines", 50)))}

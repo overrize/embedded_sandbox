@@ -240,6 +240,7 @@ static void cmd_help(void)
         "  spi               spi buses, their pins and current settings\r\n"
         "  buddy             arena allocator: free space and self-test\r\n"
         "  slots            which modules are resident, and what each owns\r\n"
+        "  json             the whole live state on one line, for machines\r\n"
         "  i2c scan|read|write   talk to an I2C device from here, no MDL needed\r\n"
         "  evt <pin> [n]   fire a pin's interrupt from software (no button needed)\r\n"
         "  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)\r\n"
@@ -691,6 +692,129 @@ static void cmd_i2c(int argc, char **argv)
 }
 
 
+/*
+ * `json` -- the whole live state, machine-readable [A4].
+ *
+ * Every other command here is written for a person: aligned columns, units
+ * spelled out, an explanation when something is refused. An agent parsing
+ * that is guessing at a format nobody promised to keep, and the guess
+ * breaks silently the next time a column is widened.
+ *
+ * One object rather than a `json <topic>` family, because an agent almost
+ * always wants the whole picture and N round trips over a serial link is
+ * the slow part. It is also one thing to keep correct instead of six.
+ *
+ * Emitted on a single line so a reader can take exactly one line and parse
+ * it, without needing to know how many lines to expect.
+ */
+static void json_str(const char *s)
+{
+    mdl_console_puts("\"");
+    /* Only the two escapes a name here can contain. Module names come from
+     * a fixed-size char array in the image header and are not free text --
+     * a full escaper would be more code guarding against input this field
+     * cannot hold. */
+    for (; *s != 0; s++) {
+        if (*s == '"' || *s == '\\') {
+            mdl_console_puts("\\");
+        }
+        char one[2];
+        one[0] = *s;
+        one[1] = 0;
+        mdl_console_puts(one);
+    }
+    mdl_console_puts("\"");
+}
+
+static const char *slot_state_name(uint8_t st)
+{
+    switch (st) {
+    case MDL_SLOT_EMPTY:   return "empty";
+    case MDL_SLOT_LOADED:  return "loaded";
+    case MDL_SLOT_RUNNING: return "running";
+    case MDL_SLOT_FAULTED: return "faulted";
+    default:               return "unknown";
+    }
+}
+
+static void cmd_json(void)
+{
+    mdl_console_puts("{\"abi\":");
+    put_u32((uint32_t)HOST_API_ABI_VERSION);
+    mdl_console_puts(",\"build\":");
+    json_str(__DATE__ " " __TIME__);
+
+    mdl_console_puts(",\"max_slots\":");
+    put_u32((uint32_t)MDL_MAX_SLOTS);
+
+    mdl_console_puts(",\"slots\":[");
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        const module_t *m = &g_mdl_slots[i];
+        if (i != 0) {
+            mdl_console_puts(",");
+        }
+        mdl_console_puts("{\"i\":");
+        put_u32((uint32_t)i);
+        mdl_console_puts(",\"state\":");
+        json_str(slot_state_name((uint8_t)m->state));
+        if (m->state != MDL_SLOT_EMPTY) {
+            mdl_console_puts(",\"name\":");
+            json_str(m->name);
+            mdl_console_puts(",\"cmd\":");
+            json_str(m->cmd_name);
+            mdl_console_puts(",\"text\":");
+            put_u32((uint32_t)m->text_lo);
+            mdl_console_puts(",\"claims\":");
+            put_u32((uint32_t)m->res_count);
+
+            mdl_events_stats_t ev;
+            mdl_events_get_stats(i, &ev);
+            mdl_console_puts(",\"events\":{\"delivered\":");
+            put_u32(ev.delivered);
+            mdl_console_puts(",\"merged\":");
+            put_u32(ev.coalesced);
+            mdl_console_puts(",\"lost\":");
+            put_u32(ev.lost);
+            mdl_console_puts(",\"declared_hz\":");
+            put_u32((uint32_t)ev.declared_hz);
+            mdl_console_puts(",\"peak_hz\":");
+            put_u32(ev.peak_hz);
+            mdl_console_puts("}");
+        }
+        mdl_console_puts("}");
+    }
+    mdl_console_puts("]");
+
+    size_t afree = 0, alargest = 0;
+    mdl_buddy_stats(&afree, &alargest);
+    mdl_console_puts(",\"arena\":{\"free\":");
+    put_u32((uint32_t)afree);
+    mdl_console_puts(",\"largest\":");
+    put_u32((uint32_t)alargest);
+    mdl_console_puts("}");
+
+    mdl_console_puts(",\"stored\":");
+    put_u32(board_persist_count());
+
+    /* The fault record, and whether there IS one -- an agent must not read
+     * a stale pc as a live failure. */
+    mdl_console_puts(",\"fault\":");
+    if (g_mdl_last_fault.occurred) {
+        mdl_console_puts("{\"pc\":");
+        put_u32(g_mdl_last_fault.pc);
+        mdl_console_puts(",\"cfsr\":");
+        put_u32(g_mdl_last_fault.cfsr);
+        mdl_console_puts(",\"mmfar\":");
+        put_u32(g_mdl_last_fault.mmfar);
+        mdl_console_puts("}");
+    } else {
+        mdl_console_puts("null");
+    }
+
+    mdl_console_puts("}\r\n");
+}
+
+
 static void cmd_slots(void)
 {
     int live = 0;
@@ -941,6 +1065,7 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "spi")    == 0) cmd_spi();
     else if (strcmp(argv[0], "buddy")  == 0) cmd_buddy();
     else if (strcmp(argv[0], "slots")  == 0) cmd_slots();
+    else if (strcmp(argv[0], "json")   == 0) cmd_json();
     else if (strcmp(argv[0], "i2c")    == 0) cmd_i2c(argc, argv);
     else if (strcmp(argv[0], "evt")    == 0) cmd_evt(argc, argv);
     else if (strcmp(argv[0], "led")    == 0) cmd_led(argc, argv);
