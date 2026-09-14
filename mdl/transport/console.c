@@ -227,6 +227,7 @@ static void cmd_help(void)
         "  adc               adc channels, and which pin each one is\r\n"
         "  spi               spi buses, their pins and current settings\r\n"
         "  buddy             arena allocator: free space and self-test\r\n"
+        "  slots            which modules are resident, and what each owns\r\n"
         "  evt <pin> [n]   fire a pin's interrupt from software (no button needed)\r\n"
         "  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)\r\n"
         "  btn <i>           read whitelisted input pin i\r\n"
@@ -523,6 +524,46 @@ static void cmd_evt(int argc, char **argv)
     mdl_console_puts("\r\n");
 }
 
+/*
+ * `slots` -- what is resident, and what each module owns.
+ *
+ * `status` still reports a single module, because the wire protocol's
+ * STATUS frame has one state field and widening it would break every
+ * tool that speaks it. This is the human-facing view, and it exists
+ * because with four slots "is it loaded" stops being a yes/no question.
+ */
+static void cmd_slots(void)
+{
+    int live = 0;
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        const module_t *m = &g_mdl_slots[i];
+        put_u32((uint32_t)i);
+        mdl_console_puts(": ");
+        if (m->state == MDL_SLOT_EMPTY) {
+            mdl_console_puts("(empty)");
+            mdl_console_puts("\r\n");
+            continue;
+        }
+        live++;
+        mdl_console_puts(m->name[0] ? m->name : "(unnamed)");
+        if (m->cmd_name[0] != 0) {
+            mdl_console_puts("  cmd ");
+            mdl_console_puts(m->cmd_name);
+        }
+        mdl_console_puts("  text ");
+        put_hex32((uint32_t)m->text_lo);
+        mdl_console_puts("  claims ");
+        put_u32((uint32_t)m->res_count);
+        mdl_console_puts(m->state == MDL_SLOT_RUNNING ? "  RUNNING" : "  loaded");
+        mdl_console_puts("\r\n");
+    }
+    put_u32((uint32_t)live);
+    mdl_console_puts(" of ");
+    put_u32((uint32_t)MDL_MAX_SLOTS);
+    mdl_console_puts(" slots in use");
+    mdl_console_puts("\r\n");
+}
+
 static void cmd_buddy(void)
 {
     char detail[96];
@@ -717,6 +758,7 @@ void mdl_console_execute(char *line)
     else if (strcmp(argv[0], "adc")    == 0) cmd_adc();
     else if (strcmp(argv[0], "spi")    == 0) cmd_spi();
     else if (strcmp(argv[0], "buddy")  == 0) cmd_buddy();
+    else if (strcmp(argv[0], "slots")  == 0) cmd_slots();
     else if (strcmp(argv[0], "evt")    == 0) cmd_evt(argc, argv);
     else if (strcmp(argv[0], "led")    == 0) cmd_led(argc, argv);
     else if (strcmp(argv[0], "btn")    == 0) cmd_btn(argc, argv);

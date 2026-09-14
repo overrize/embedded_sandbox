@@ -16,7 +16,7 @@
  * mdl_supervisor_restore() is above it and must use the same startup
  * path -- a restored MDL coming up differently from a pushed one is a
  * difference that would only ever show at a customer site. */
-static bool start_loaded_module(void);
+static bool start_loaded_module(module_t *slot);
 
 
 static TaskHandle_t s_supervisor_handle;
@@ -42,7 +42,13 @@ void mdl_supervisor_restore(void)
         return;
     }
 
-    mdl_load_status_t st = mdl_load(&g_mdl_slot, image, len,
+    /* Slot zero: this runs at boot with nothing else loaded, so there is
+     * no choice to make. F2 saves one image; restoring a SET of them is
+     * S5's job, and pretending to pick a slot here would suggest it
+     * already works. */
+    module_t *slot = &g_mdl_slots[0];
+
+    mdl_load_status_t st = mdl_load(slot, image, len,
                                      HOST_API_ABI_VERSION, MDL_ARCH_ARMV7M);
     if (st != MDL_LOAD_OK) {
         mdl_console_puts("[host] saved MDL rejected at boot: ");
@@ -53,16 +59,16 @@ void mdl_supervisor_restore(void)
             mdl_console_puts(detail);
         }
         mdl_console_puts("\r\n");
-        g_mdl_slot.state = MDL_SLOT_EMPTY;
+        slot->state = MDL_SLOT_EMPTY;
         return;
     }
 
-    if (!start_loaded_module()) {
-        g_mdl_slot.state = MDL_SLOT_EMPTY;
+    if (!start_loaded_module(slot)) {
+        slot->state = MDL_SLOT_EMPTY;
         return;
     }
     mdl_console_puts("[host] restored saved MDL: ");
-    mdl_console_puts(g_mdl_slot.name);
+    mdl_console_puts(slot->name);
     mdl_console_puts("\r\n");
 }
 
@@ -83,26 +89,26 @@ void mdl_supervisor_wake_from_isr(void)
     portYIELD_FROM_ISR(woken);
 }
 
-static void reclaim_module(void)
+static void reclaim_slot(module_t *slot)
 {
-    if (g_mdl_slot.task_handle != NULL) {
-        vTaskDelete((TaskHandle_t)g_mdl_slot.task_handle);
-        g_mdl_slot.task_handle = NULL;
+    if (slot->task_handle != NULL) {
+        vTaskDelete((TaskHandle_t)slot->task_handle);
+        slot->task_handle = NULL;
     }
     /* Force-reclaim the alloc() pool regardless of what the module did
      * or didn't free -- "整池回收" per host_api.h's alloc()/free() doc.
      * host_api_pool_reset() is idempotent; safe to call even if the
      * module never allocated anything. */
-    host_api_pool_reset(&g_mdl_slot);
+    host_api_pool_reset(slot);
 
     /* Hand the arena blocks back [S1]. After the task is gone and before
      * the bounds are cleared: releasing while the module could still run
      * would put its own memory back in the pool underneath it. */
-    mdl_arena_release(&g_mdl_slot);
-    g_mdl_slot.state = MDL_SLOT_EMPTY;
-    g_mdl_slot.entry = NULL;
-    g_mdl_slot.last_active_tick = 0;
-    g_mdl_slot.parked_until_tick = 0;
+    mdl_arena_release(slot);
+    slot->state = MDL_SLOT_EMPTY;
+    slot->entry = NULL;
+    slot->last_active_tick = 0;
+    slot->parked_until_tick = 0;
 
     /* Everything the MDL declared about itself goes too.
      *
@@ -120,30 +126,30 @@ static void reclaim_module(void)
     /* Only this slot's lines [S2/S3]. disarm_all() here would take a
      * neighbouring module's button away as a side effect of unloading
      * this one -- silently, and long after the cause. */
-    mdl_events_disarm_slot(mdl_slot_index(&g_mdl_slot));
+    mdl_events_disarm_slot(mdl_slot_index(slot));
 
     /* Release peripherals before the claims are cleared, same ordering
      * reason as the GPIO release below. */
-    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_I2C) {
-            host_i2c_release((int)g_mdl_slot.res[i].id);
+    for (uint8_t i = 0; i < slot->res_count; i++) {
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_I2C) {
+            host_i2c_release((int)slot->res[i].id);
         }
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_UART) {
-            host_uart_release((int)g_mdl_slot.res[i].id);
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_UART) {
+            host_uart_release((int)slot->res[i].id);
         }
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_ADC) {
-            host_adc_release((int)g_mdl_slot.res[i].id);
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_ADC) {
+            host_adc_release((int)slot->res[i].id);
         }
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_SPI) {
-            host_spi_release((int)g_mdl_slot.res[i].id);
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_SPI) {
+            host_spi_release((int)slot->res[i].id);
         }
     }
 
-    uint32_t restored = host_gpio_release_claims(g_mdl_slot.gpio_claimed);
-    g_mdl_slot.gpio_claimed = 0;
-    g_mdl_slot.res_count    = 0;
-    g_mdl_slot.evt_entry    = NULL;
-    g_mdl_slot.cmd_pending  = 0u;
+    uint32_t restored = host_gpio_release_claims(slot->gpio_claimed);
+    slot->gpio_claimed = 0;
+    slot->res_count    = 0;
+    slot->evt_entry    = NULL;
+    slot->cmd_pending  = 0u;
     if (restored != 0u) {
         mdl_console_puts("[host] gpio released -> default:");
         for (unsigned i = 0; i < 32u; i++) {
@@ -158,10 +164,10 @@ static void reclaim_module(void)
         }
         mdl_console_puts("\r\n");
     }
-    g_mdl_slot.cmd_entry    = NULL;
-    g_mdl_slot.cmd_name[0]  = '\0';
-    g_mdl_slot.name[0]      = '\0';
-    g_mdl_slot.cmd_ret      = 0;
+    slot->cmd_entry    = NULL;
+    slot->cmd_name[0]  = '\0';
+    slot->name[0]      = '\0';
+    slot->cmd_ret      = 0;
 }
 
 void mdl_supervisor_request_unload(void)
@@ -169,7 +175,7 @@ void mdl_supervisor_request_unload(void)
     if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
         return; /* already unloaded -- not an error, same as MDL_CMD_UNLOAD */
     }
-    reclaim_module();
+    reclaim_slot(&g_mdl_slot);
 }
 
 /*
@@ -177,6 +183,45 @@ void mdl_supervisor_request_unload(void)
  * conflict' alone tells the person pushing the MDL nothing they can act
  * on; mdl_load_detail() names the pin and its holder.
  */
+/* ---- choosing a slot [S2] ------------------------------------------ */
+
+static module_t *find_slot_by_name(const char *name)
+{
+    if (name == NULL || name[0] == 0) {
+        return NULL;
+    }
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        if (g_mdl_slots[i].state != MDL_SLOT_EMPTY &&
+            strncmp(g_mdl_slots[i].name, name, MDL_NAME_MAX) == 0) {
+            return &g_mdl_slots[i];
+        }
+    }
+    return NULL;
+}
+
+static module_t *find_free_slot(void)
+{
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        if (g_mdl_slots[i].state == MDL_SLOT_EMPTY) {
+            return &g_mdl_slots[i];
+        }
+    }
+    return NULL;
+}
+
+/* The console types a command name; this finds whose it is. */
+static module_t *find_slot_by_command(const char *cmd)
+{
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        module_t *m = &g_mdl_slots[i];
+        if (m->state == MDL_SLOT_RUNNING && m->cmd_entry != NULL &&
+            m->cmd_name[0] != 0 && strcmp(cmd, m->cmd_name) == 0) {
+            return m;
+        }
+    }
+    return NULL;
+}
+
 static void send_load_error(mdl_load_status_t st)
 {
     const char *msg = mdl_load_status_str(st);
@@ -203,44 +248,44 @@ static void send_load_error(mdl_load_status_t st)
  * Shared by handle_load() and mdl_supervisor_restore() so a restored MDL
  * and a pushed one cannot come up differently.
  */
-static bool start_loaded_module(void)
+static bool start_loaded_module(module_t *slot)
 {
-    host_api_pool_reset(&g_mdl_slot);
-    if (!mdl_start_module_task(&g_mdl_slot, &g_host_api)) {
+    host_api_pool_reset(slot);
+    if (!mdl_start_module_task(slot, &g_host_api)) {
         return false;
     }
     /* Arm interrupts only now: the ISR notifies the module task, so the
      * task has to exist first. */
-    mdl_events_reset(mdl_slot_index(&g_mdl_slot), g_mdl_slot.evt_queue_depth,
-                      g_mdl_slot.evt_rate_hz, g_mdl_slot.task_handle);
-    for (uint8_t i = 0; i < g_mdl_slot.res_count; i++) {
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_GPIO &&
-            g_mdl_slot.res[i].edge != (uint8_t)MDL_EDGE_NONE) {
-            (void)mdl_events_arm_gpio(mdl_slot_index(&g_mdl_slot),
-                                       (int)g_mdl_slot.res[i].id,
-                                       g_mdl_slot.res[i].edge);
+    mdl_events_reset(mdl_slot_index(slot), slot->evt_queue_depth,
+                      slot->evt_rate_hz, slot->task_handle);
+    for (uint8_t i = 0; i < slot->res_count; i++) {
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_GPIO &&
+            slot->res[i].edge != (uint8_t)MDL_EDGE_NONE) {
+            (void)mdl_events_arm_gpio(mdl_slot_index(slot),
+                                       (int)slot->res[i].id,
+                                       slot->res[i].edge);
         }
         /* A declared bus is brought up here, not on first use: an MDL
          * that declared it should find it working, and a bus that cannot
          * be initialised (wrong APB1 clock) should say so at load rather
          * than surface as a transfer failure later. */
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_I2C) {
-            if (!host_i2c_claim((int)g_mdl_slot.res[i].id)) {
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_I2C) {
+            if (!host_i2c_claim((int)slot->res[i].id)) {
                 mdl_console_puts("[host] i2c bus could not be initialised\r\n");
             }
         }
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_UART) {
-            if (!host_uart_claim((int)g_mdl_slot.res[i].id)) {
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_UART) {
+            if (!host_uart_claim((int)slot->res[i].id)) {
                 mdl_console_puts("[host] uart could not be initialised\r\n");
             }
         }
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_ADC) {
-            if (!host_adc_claim((int)g_mdl_slot.res[i].id)) {
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_ADC) {
+            if (!host_adc_claim((int)slot->res[i].id)) {
                 mdl_console_puts("[host] adc channel could not be claimed\r\n");
             }
         }
-        if (g_mdl_slot.res[i].kind == (uint8_t)MDL_RES_KIND_SPI) {
-            if (!host_spi_claim((int)g_mdl_slot.res[i].id)) {
+        if (slot->res[i].kind == (uint8_t)MDL_RES_KIND_SPI) {
+            if (!host_spi_claim((int)slot->res[i].id)) {
                 mdl_console_puts("[host] spi could not be initialised\r\n");
             }
         }
@@ -268,9 +313,51 @@ static bool start_loaded_module(void)
  * is the recovery path, and the reply says so rather than leaving someone
  * to work out why the device went quiet.
  */
+/*
+ * Peek at the name inside an image without loading it.
+ *
+ * Needed before the slot is chosen, because the slot depends on the name:
+ * a push of the same module replaces it, a push of a different one takes
+ * a new slot. Reads only the header, which mdl_load_validate() is about to
+ * check anyway -- a malformed image is rejected a moment later either way.
+ */
+static const char *image_name(const uint8_t *payload, uint32_t len)
+{
+    if (len < sizeof(mdl_header_t)) {
+        return "";
+    }
+    return ((const mdl_header_t *)payload)->name;
+}
+
 static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
 {
-    mdl_load_status_t vst = mdl_load_validate(&g_mdl_slot, payload, len,
+    /*
+     * WHICH SLOT [S2].
+     *
+     * Same name replaces; a different name takes a free slot. That keeps
+     * hot replace meaning what it meant -- pushing a newer build of a
+     * module swaps it -- while pushing a DIFFERENT module now adds it
+     * instead of evicting whatever happened to be resident.
+     *
+     * THIS IS A VISIBLE BEHAVIOUR CHANGE. Two modules that both want one
+     * pin used to take turns by accident, because the second push
+     * destroyed the first. They coexist now until one asks for a wire the
+     * other holds, and then the load is refused by name. The refusal is
+     * the point of multi-slot rather than a regression -- but a push
+     * sequence that used to work may now need an explicit unload.
+     */
+    module_t *slot = find_slot_by_name(image_name(payload, len));
+    bool replacing = (slot != NULL);
+    if (slot == NULL) {
+        slot = find_free_slot();
+    }
+    if (slot == NULL) {
+        mdl_proto_send_response(MDL_RESP_ERROR,
+            "all slots in use; unload one first", 33);
+        return;
+    }
+
+    mdl_load_status_t vst = mdl_load_validate(slot, payload, len,
                                                 HOST_API_ABI_VERSION,
                                                 MDL_ARCH_ARMV7M);
     if (vst != MDL_LOAD_OK) {
@@ -279,24 +366,23 @@ static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
         return;
     }
 
-    bool replacing = (g_mdl_slot.state != MDL_SLOT_EMPTY);
     if (replacing) {
-        reclaim_module();
+        reclaim_slot(slot);
     }
 
-    mdl_load_status_t st = mdl_load(&g_mdl_slot, payload, len,
+    mdl_load_status_t st = mdl_load(slot, payload, len,
                                      HOST_API_ABI_VERSION, MDL_ARCH_ARMV7M);
     if (st != MDL_LOAD_OK) {
         /* Validation passed and the copy still failed -- so this is not a
          * bad image but something wrong on the device side. Say that
          * plainly instead of reporting it as a rejected module. */
-        g_mdl_slot.state = MDL_SLOT_EMPTY;
+        slot->state = MDL_SLOT_EMPTY;
         send_load_error(st);
         return;
     }
 
-    if (!start_loaded_module()) {
-        g_mdl_slot.state = MDL_SLOT_EMPTY;
+    if (!start_loaded_module(slot)) {
+        slot->state = MDL_SLOT_EMPTY;
         mdl_proto_send_response(MDL_RESP_ERROR,
             replacing ? "task creation failed; the previous MDL is gone, "
                          "power-cycle to restore the saved one"
@@ -318,11 +404,18 @@ static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
 }
 static void handle_unload(void)
 {
-    if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
-        mdl_proto_send_response(MDL_RESP_OK, NULL, 0); /* already unloaded -- not an error */
-        return;
+    /* Every slot. The wire protocol's UNLOAD carries no argument, and when
+     * there was one module it meant "clear it" -- so clearing all of them
+     * is the reading that stays true. Unloading ONE is a console command,
+     * where a name can be given. */
+    int freed = 0;
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        if (g_mdl_slots[i].state != MDL_SLOT_EMPTY) {
+            reclaim_slot(&g_mdl_slots[i]);
+            freed++;
+        }
     }
-    reclaim_module();
+    (void)freed;   /* already-empty is not an error */
     mdl_proto_send_response(MDL_RESP_OK, NULL, 0);
 }
 
@@ -350,14 +443,26 @@ mdl_cmd_result_t mdl_supervisor_run_module_command(int argc, char **argv, int *o
 {
     /* RUNNING, not LOADED: the task is resident now and the command is
      * queued to it rather than restarting it. */
-    if (g_mdl_slot.state != MDL_SLOT_RUNNING || g_mdl_slot.cmd_entry == NULL) {
-        return MDL_CMD_NO_MODULE;
-    }
-    if (argc < 1 || strcmp(argv[0], g_mdl_slot.cmd_name) != 0) {
+    if (argc < 1) {
         return MDL_CMD_NAME_MISMATCH;
     }
+    /* Whose command is this? [S2] With one module the answer was implicit.
+     * Two modules offering the same name would be ambiguous, which is why
+     * a duplicate command name is refused at load. */
+    module_t *slot = find_slot_by_command(argv[0]);
+    if (slot == NULL) {
+        /* Distinguish "nothing is loaded" from "that is not its name" --
+         * they send the user to different places. */
+        for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+            if (g_mdl_slots[i].state == MDL_SLOT_RUNNING &&
+                g_mdl_slots[i].cmd_entry != NULL) {
+                return MDL_CMD_NAME_MISMATCH;
+            }
+        }
+        return MDL_CMD_NO_MODULE;
+    }
 
-    if (!mdl_post_module_command(&g_mdl_slot, argc, (const char *const *)argv)) {
+    if (!mdl_post_module_command(slot, argc, (const char *const *)argv)) {
         return MDL_CMD_START_FAILED;
     }
 
@@ -368,17 +473,20 @@ mdl_cmd_result_t mdl_supervisor_run_module_command(int argc, char **argv, int *o
     for (uint32_t waited = 0; waited < MDL_CMD_TIMEOUT_MS; waited += MDL_CMD_POLL_MS) {
         vTaskDelay(pdMS_TO_TICKS(MDL_CMD_POLL_MS));
 
-        if (g_mdl_slot.cmd_pending == 0u) {
-            *out_ret = g_mdl_slot.cmd_ret;
+        if (slot->cmd_pending == 0u) {
+            *out_ret = slot->cmd_ret;
             return MDL_CMD_OK;
         }
-        if (g_mdl_slot.state == MDL_SLOT_FAULTED) {
-            reclaim_module();
+        if (slot->state == MDL_SLOT_FAULTED) {
+            reclaim_slot(slot);
             return MDL_CMD_FAULTED;
         }
     }
 
-    reclaim_module();
+    /* Only the offending slot. Taking every module out because one
+     * wedged would make a neighbour's failure indistinguishable from
+     * its own. */
+    reclaim_slot(slot);
     return MDL_CMD_TIMEOUT;
 }
 
@@ -387,26 +495,38 @@ void mdl_supervisor_run(void)
     for (;;) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(MDL_WATCHDOG_POLL_MS));
 
-        if (g_mdl_slot.state == MDL_SLOT_FAULTED) {
-            /* Already classified and marked by fault_arm.c's handler --
-             * just reclaim. */
-            reclaim_module();
-        } else if (g_mdl_slot.state == MDL_SLOT_RUNNING) {
+        /* Every slot, independently [S2]. A module that faults or wedges
+         * takes only itself out -- which is the entire point of giving
+         * each one its own MPU regions and its own task. Reclaiming the
+         * whole table would make a neighbour's bug look like yours. */
+        for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+            module_t *m = &g_mdl_slots[i];
+
+            if (m->state == MDL_SLOT_FAULTED) {
+                reclaim_slot(m);
+                continue;
+            }
+            if (m->state != MDL_SLOT_RUNNING) {
+                continue;
+            }
+
             uint32_t now = (uint32_t)xTaskGetTickCount();
             /* Signed compare so tick wraparound stays correct: a parked
              * MDL is blocked inside the host and is not a candidate. */
-            bool parked = (g_mdl_slot.parked_until_tick == MDL_PARKED_FOREVER) ||
-                           ((g_mdl_slot.parked_until_tick != 0u) &&
-                            ((int32_t)(now - g_mdl_slot.parked_until_tick) < 0));
-            uint32_t idle_ms = (now - g_mdl_slot.last_active_tick); /* configTICK_RATE_HZ==1000 -> ticks==ms */
+            bool parked = (m->parked_until_tick == MDL_PARKED_FOREVER) ||
+                           ((m->parked_until_tick != 0u) &&
+                            ((int32_t)(now - m->parked_until_tick) < 0));
+            /* configTICK_RATE_HZ == 1000, so ticks are milliseconds. */
+            uint32_t idle_ms = (now - m->last_active_tick);
+
             if (!parked && idle_ms > MDL_WATCHDOG_TIMEOUT_MS) {
-                /* Presumed hung (the while(1){} case: no host call, ever,
-                 * for the whole timeout window) -- same treatment as a
-                 * real fault, just discovered by timeout instead of by
-                 * MemManage. No fault-info to record (nothing trapped),
-                 * so g_mdl_last_fault is left as whatever it last was. */
-                g_mdl_slot.state = MDL_SLOT_FAULTED;
-                reclaim_module();
+                /* Presumed hung (the while(1){} case: no host call at all
+                 * for the whole window) -- same treatment as a real fault,
+                 * just discovered by timeout rather than by MemManage. No
+                 * fault info to record, so g_mdl_last_fault is left as it
+                 * was. */
+                m->state = MDL_SLOT_FAULTED;
+                reclaim_slot(m);
             }
         }
 
