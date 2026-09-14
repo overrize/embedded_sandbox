@@ -24,6 +24,7 @@ Requires pyserial ("pip install pyserial") -- the one external
 dependency in this whole toolchain (packer.py deliberately has none),
 because there is no reasonable stdlib way to talk to a serial port.
 """
+import sys
 import argparse
 import struct
 import subprocess
@@ -243,14 +244,20 @@ def push_module(mdl_path: Path, port: str, baud: int, verify: bool = False,
 
 
 def do_one_cycle(module_dir: Path, port: str, baud: int, gcc: str, python_exe: str,
-                 verify: bool = False, persist: bool = False) -> None:
+                 verify: bool = False, persist: bool = False, skip_mock: bool = False) -> None:
     module_c = module_dir / "module.c"
     t0 = time.time()
 
-    find_step("mock_host (native, fast)")
-    if not mock_test(module_c, python_exe):
-        print(f"✗ stopped after mock_host failure ({time.time() - t0:.1f}s)")
-        return
+    # The mock is a filter, not a gate: it catches logic errors cheaply,
+    # and skipping it is a supported trade rather than a workaround. A
+    # RESIDENT module never returns from module_init(), so the mock waits
+    # out its whole timeout on every save -- seconds per keystroke, which
+    # is the opposite of what this tool exists for.
+    if not skip_mock:
+        find_step("mock_host (native, fast)")
+        if not mock_test(module_c, python_exe):
+            print(f"\u2717 stopped after mock_host failure ({time.time() - t0:.1f}s)")
+            return
 
     find_step("compiling for ARM")
     so_path = compile_for_arm(module_c, gcc)
@@ -270,7 +277,25 @@ def do_one_cycle(module_dir: Path, port: str, baud: int, gcc: str, python_exe: s
     print(f"\n(total: {time.time() - t0:.2f}s)")
 
 
+def _safe_stdout():
+    """
+    Windows consoles default to a legacy codepage (GBK here), and printing
+    a tick mark to one raises UnicodeEncodeError.
+
+    Not cosmetic: the crash happened AFTER the module was pushed and
+    running, so a SUCCESSFUL cycle ended in a traceback. A tool whose whole
+    job is a fast feedback loop must not be able to fail at the last step
+    while telling you it worked.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            pass   # older Python, or a stream that cannot be reconfigured
+
+
 def main(argv=None) -> int:
+    _safe_stdout()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_dir", type=Path,
                     help="directory containing module.c, or a prebuilt .mdl to push as-is")
@@ -279,6 +304,10 @@ def main(argv=None) -> int:
     ap.add_argument("--gcc", default="arm-none-eabi-gcc")
     ap.add_argument("--python", default=sys.executable)
     ap.add_argument("--once", action="store_true", help="run one cycle and exit, instead of watching")
+    ap.add_argument("--no-mock", action="store_true",
+                    help="skip the native mock. A resident module never returns from module_init(), "
+                         "so the mock waits out its whole timeout on every save -- seconds per "
+                         "keystroke, which is the opposite of what this tool is for.")
     ap.add_argument("--persist", action="store_true",
                     help="also write the MDL to flash so it survives power "
                          "loss and is reloaded at boot. Erases a flash sector, "
@@ -310,7 +339,7 @@ def main(argv=None) -> int:
 
     if args.once:
         do_one_cycle(args.module_dir, args.port, args.baud, args.gcc, args.python,
-                     args.verify, args.persist)
+                     args.verify, args.persist, args.no_mock)
         return 0
 
     print(f"watching {module_c} -- Ctrl+C to stop")
