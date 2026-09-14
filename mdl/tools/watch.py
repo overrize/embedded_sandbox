@@ -350,7 +350,7 @@ def main(argv=None) -> int:
             if mtime != last_mtime:
                 last_mtime = mtime
                 do_one_cycle(args.module_dir, args.port, args.baud, args.gcc, args.python,
-                             args.verify, args.persist)
+                             args.verify, args.persist, args.no_mock)
             time.sleep(0.3)
     except KeyboardInterrupt:
         print("\nstopped.")
