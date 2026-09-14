@@ -12,6 +12,18 @@
  * instead; not needed yet, not built speculatively.
  */
 /*
+ * [S2] EVERY HELPER BELOW USES THE CALLER'S SLOT, not g_mdl_slot.
+ *
+ * They used to read the singleton, which was correct when there was one
+ * module and became a silent corruption when there were four: a module
+ * running in slot 1 would mark SLOT 0 as finished, clear SLOT 0's task
+ * handle, and write its return value into SLOT 0's fields.
+ *
+ * It was found the first time two modules were resident at once -- two
+ * successful loads followed by `slots` reporting nothing loaded. That is
+ * the risk the transitional g_mdl_slot alias carries: in code that has
+ * become multi-slot, it silently means "slot zero" and still compiles.
+ *
  * THE TRAMPOLINE RUNS UNPRIVILEGED, SO IT CANNOT TOUCH g_mdl_slot DIRECTLY.
  *
  * mdl_start_module_task() below deliberately does NOT set portPRIVILEGE_BIT,
@@ -49,8 +61,14 @@ static void module_task_read_entry(module_entry_t *out) MDL_SYSCALL_GATE;
 static void module_task_read_entry(module_entry_t *out)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    out->entry    = g_mdl_slot.entry;
-    out->got_base = (void *)g_mdl_slot.data_lo;
+    const module_t *m = mdl_caller_slot();
+    if (m == NULL) {
+        out->entry = NULL;
+        out->got_base = NULL;
+        return;
+    }
+    out->entry    = m->entry;
+    out->got_base = (void *)m->data_lo;
     vPortResetPrivilege(was_priv);
 }
 
@@ -66,8 +84,14 @@ static void module_task_read_cmd(module_entry_t *out, int *argc,
                                   const char *const **argv)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    out->entry    = g_mdl_slot.cmd_entry;
-    out->got_base = (void *)g_mdl_slot.data_lo;
+    const module_t *m = mdl_caller_slot();
+    if (m == NULL) {
+        out->entry = NULL;
+        out->got_base = NULL;
+        return;
+    }
+    out->entry    = m->cmd_entry;
+    out->got_base = (void *)m->data_lo;
     *argc         = s_cmd_argc;
     *argv         = s_cmd_argv;
     vPortResetPrivilege(was_priv);
@@ -77,8 +101,11 @@ static void module_task_finish_cmd(int ret) MDL_SYSCALL_GATE;
 static void module_task_finish_cmd(int ret)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    g_mdl_slot.cmd_ret     = ret;
-    g_mdl_slot.cmd_pending = 0u; /* the task lives on -- only the command ended */
+    module_t *m = mdl_caller_slot();
+    if (m != NULL) {
+        m->cmd_ret     = ret;
+        m->cmd_pending = 0u; /* the task lives on -- only the command ended */
+    }
     vPortResetPrivilege(was_priv);
 }
 
@@ -86,11 +113,14 @@ static void module_task_mark_finished(void) MDL_SYSCALL_GATE;
 static void module_task_mark_finished(void)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    g_mdl_slot.state = MDL_SLOT_LOADED; /* ran once; loader may reload */
-    g_mdl_slot.task_handle = NULL;      /* about to be stale -- don't leave a
-                                          * dangling handle supervisor.c could
-                                          * mistakenly vTaskDelete() again on
-                                          * some later, unrelated fault */
+    module_t *m = mdl_caller_slot();
+    if (m != NULL) {
+        m->state = MDL_SLOT_LOADED; /* ran once; loader may reload */
+        m->task_handle = NULL;      /* about to be stale -- don't leave a
+                                      * dangling handle supervisor.c could
+                                      * mistakenly vTaskDelete() again on
+                                      * some later, unrelated fault */
+    }
     vPortResetPrivilege(was_priv);
 }
 
@@ -105,9 +135,16 @@ static void module_task_read_ctx(module_ctx_t *out) MDL_SYSCALL_GATE;
 static void module_task_read_ctx(module_ctx_t *out)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    out->cmd_entry = g_mdl_slot.cmd_entry;
-    out->evt_entry = g_mdl_slot.evt_entry;
-    out->got_base  = (void *)g_mdl_slot.data_lo;
+    const module_t *m = mdl_caller_slot();
+    if (m == NULL) {
+        out->cmd_entry = NULL;
+        out->evt_entry = NULL;
+        out->got_base  = NULL;
+        return;
+    }
+    out->cmd_entry = m->cmd_entry;
+    out->evt_entry = m->evt_entry;
+    out->got_base  = (void *)m->data_lo;
     vPortResetPrivilege(was_priv);
 }
 
@@ -132,7 +169,10 @@ static void module_task_wait(void) MDL_SYSCALL_GATE;
 static void module_task_wait(void)
 {
     BaseType_t was_priv = xPortRaisePrivilege();
-    g_mdl_slot.parked_until_tick = MDL_PARKED_FOREVER;
+    module_t *parked = mdl_caller_slot();
+    if (parked != NULL) {
+        parked->parked_until_tick = MDL_PARKED_FOREVER;
+    }
     vPortResetPrivilege(was_priv);
 
     /* MPU_ulTaskNotifyTake via mpu_wrappers -- a legal SVC from
@@ -140,8 +180,10 @@ static void module_task_wait(void)
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
 
     was_priv = xPortRaisePrivilege();
-    g_mdl_slot.parked_until_tick = 0;
-    g_mdl_slot.last_active_tick  = (uint32_t)xTaskGetTickCount();
+    if (parked != NULL) {
+        parked->parked_until_tick = 0;
+        parked->last_active_tick  = (uint32_t)xTaskGetTickCount();
+    }
     vPortResetPrivilege(was_priv);
 }
 

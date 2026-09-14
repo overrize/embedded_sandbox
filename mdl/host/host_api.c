@@ -253,10 +253,22 @@ bool host_gpio_yielded_to_module(int pin)
     /* An empty slot cannot be holding anything, whatever gpio_claimed
      * still says. reclaim_module() clears it now, but this is the check
      * that makes forgetting to harmless rather than a dark LED. */
-    if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
-        return false;
+    /* ANY loaded module, not slot zero [S2].
+     *
+     * This answers a HOST question -- may the indicator task still drive
+     * this LED -- asked from a context that has no caller, so it cannot use
+     * mdl_caller_slot(). Reading the singleton here would mean a module in
+     * slot 1 could claim an LED and the host would keep driving it anyway:
+     * two owners on one pin, which is exactly what the arbitration exists
+     * to prevent. */
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        const module_t *m = &g_mdl_slots[i];
+        if (m->state != MDL_SLOT_EMPTY &&
+            (m->gpio_claimed & (1u << (unsigned)pin)) != 0u) {
+            return true;
+        }
     }
-    return (g_mdl_slot.gpio_claimed & (1u << (unsigned)pin)) != 0u;
+    return false;
 }
 
 /*

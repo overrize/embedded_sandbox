@@ -172,10 +172,14 @@ static void reclaim_slot(module_t *slot)
 
 void mdl_supervisor_request_unload(void)
 {
-    if (g_mdl_slot.state == MDL_SLOT_EMPTY) {
-        return; /* already unloaded -- not an error, same as MDL_CMD_UNLOAD */
+    /* Every slot [S2]: this entry point names none, and with more than one
+     * resident "unload" without a subject can only mean all of them.
+     * Already-empty is not an error, same as MDL_CMD_UNLOAD. */
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        if (g_mdl_slots[i].state != MDL_SLOT_EMPTY) {
+            reclaim_slot(&g_mdl_slots[i]);
+        }
     }
-    reclaim_slot(&g_mdl_slot);
 }
 
 /*
@@ -422,6 +426,9 @@ static void handle_unload(void)
 static void handle_status(void)
 {
     mdl_proto_status_t status = { 0 };
+    /* Slot zero, deliberately. The wire protocol's STATUS frame carries
+     * ONE state field, and widening it would break every tool that
+     * speaks it. The `slots` console command is the multi-slot view. */
     status.state = (uint8_t)g_mdl_slot.state;
     status.fault_pc = g_mdl_last_fault.occurred ? g_mdl_last_fault.pc : 0;
     status.fault_text_offset = g_mdl_last_fault.occurred ? g_mdl_last_fault.text_offset : 0xFFFFFFFFu;

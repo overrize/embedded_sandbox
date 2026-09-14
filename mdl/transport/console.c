@@ -774,9 +774,22 @@ void mdl_console_execute(char *line)
          * cannot diverge in behaviour. */
         mdl_supervisor_request_unload();
         mdl_console_puts("unload requested\r\n");
-    } else if (g_mdl_slot.state != MDL_SLOT_EMPTY &&
-                g_mdl_slot.cmd_name[0] != 0 &&
-                strcmp(argv[0], g_mdl_slot.cmd_name) == 0) {
+    } else {
+        /*
+         * Anything unrecognised goes to the supervisor, which owns the
+         * question of whose command it is [S2].
+         *
+         * This used to compare against g_mdl_slot.cmd_name first and only
+         * dispatch on a match -- a second copy of a decision the supervisor
+         * already makes. With one module the two agreed; with four the copy
+         * silently meant SLOT ZERO, so a module in slot 1 advertised its
+         * command in `slots` and then got "unknown command" when anyone
+         * typed it. find_slot_by_command() was written, correct, and never
+         * reached.
+         *
+         * Two places deciding one thing is how they drift apart. There is
+         * one now, and the console reports whatever it says.
+         */
         /* Straight to the supervisor, which restarts the module's own
          * UNPRIVILEGED task at module_cmd() and waits for it. Calling
          * the module from here would run it at this task's privilege
@@ -798,14 +811,23 @@ void mdl_console_execute(char *line)
         case MDL_CMD_START_FAILED:
             mdl_console_puts("could not start it (arguments too long?)\r\n");
             break;
+        case MDL_CMD_NAME_MISMATCH:
+            /* Modules are loaded, but none answers to this. Distinct from
+             * NO_MODULE, which means nothing is loaded at all -- they send
+             * you to different places. */
+            mdl_console_puts("unknown command: ");
+            mdl_console_puts(argv[0]);
+            mdl_console_puts("  (try `help`, or `slots` for module commands)\r\n");
+            break;
+        case MDL_CMD_NO_MODULE:
+            mdl_console_puts("unknown command: ");
+            mdl_console_puts(argv[0]);
+            mdl_console_puts("  (try `help`)\r\n");
+            break;
         default:
             mdl_console_puts("MDL refused the call\r\n");
             break;
         }
-    } else {
-        mdl_console_puts("unknown command: ");
-        mdl_console_puts(argv[0]);
-        mdl_console_puts("  (try `help`)\r\n");
     }
 
     mdl_console_puts("mdl> ");
