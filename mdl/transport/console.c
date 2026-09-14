@@ -914,8 +914,18 @@ static void cmd_mem(int argc, char **argv)
 
 void mdl_console_execute(char *line)
 {
-    char *argv[4];
-    int argc = split_args(line, argv, 4);
+    /* Eight, not four [W2].
+     *
+     * Four was enough while every command was `verb <a> <b>`. The I2C shell
+     * broke that: `i2c read 1 0x50 8` is five words and `i2c write 1 0x50 0 0`
+     * is six, so argv[3] held whatever the truncation left and the address
+     * check rejected a perfectly good 0x50 -- with an error message that
+     * itself said 0x7F was fine.
+     *
+     * A parser limit that silently truncates produces errors that point at
+     * the wrong thing, which is worse than refusing the line outright. */
+    char *argv[8];
+    int argc = split_args(line, argv, 8);
 
     if (argc == 0) {
         mdl_console_puts("mdl> ");
