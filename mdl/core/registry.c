@@ -50,13 +50,35 @@ bool mdl_record_fault(uint32_t pc, uint32_t lr, uint32_t mmfar, uint32_t cfsr)
     g_mdl_last_fault.mmfar = mmfar;
     g_mdl_last_fault.cfsr = cfsr;
 
-    bool is_module_fault = g_mdl_slot.state != MDL_SLOT_EMPTY &&
-                            arch_pc_in_range(pc, g_mdl_slot.text_lo, g_mdl_slot.text_hi);
+    /*
+     * WHOSE fault, across every slot [S2].
+     *
+     * This looked only at g_mdl_slot, so a module in slot 1 faulting had a
+     * PC outside slot 0's text and was classified as a HOST fault -- which
+     * resets the board. Isolation is the whole reason each module gets its
+     * own MPU regions, and it ended at the last step: the crash was
+     * contained and then the recovery took everything down anyway.
+     *
+     * Fifth instance of one mistake in this rework: code written when there
+     * was one module keeps reading the singleton, compiles clean, and
+     * silently means slot zero.
+     */
+    module_t *faulted = NULL;
+    for (int i = 0; i < MDL_MAX_SLOTS; i++) {
+        module_t *m = &g_mdl_slots[i];
+        if (m->state != MDL_SLOT_EMPTY &&
+            arch_pc_in_range(pc, m->text_lo, m->text_hi)) {
+            faulted = m;
+            break;
+        }
+    }
+    bool is_module_fault = (faulted != NULL);
 
-    g_mdl_last_fault.text_offset = is_module_fault ? (pc - g_mdl_slot.text_lo) : 0xFFFFFFFFu;
+    g_mdl_last_fault.text_offset =
+        is_module_fault ? (pc - faulted->text_lo) : 0xFFFFFFFFu;
 
     if (is_module_fault) {
-        g_mdl_slot.state = MDL_SLOT_FAULTED;
+        faulted->state = MDL_SLOT_FAULTED;
     }
 
     /* Classification only -- deciding what to DO about it (patch the

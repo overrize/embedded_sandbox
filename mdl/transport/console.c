@@ -661,10 +661,23 @@ static void cmd_pins(void)
          * already stopped driving it -- an owner column that contradicts
          * the hardware is worse than no column. */
         const char *owner = host_gpio_host_owner(i);
-        bool claimed = (g_mdl_slot.state != MDL_SLOT_EMPTY) &&
-                        ((g_mdl_slot.gpio_claimed & (1u << (unsigned)i)) != 0u);
+
+        /* WHICH module, not whether "the" module [S7]. With four slots
+         * "[MDL]" stops being an answer: the useful question when a load
+         * is refused is which neighbour is holding the pin. */
+        const char *holder = NULL;
+        for (int sI = 0; sI < MDL_MAX_SLOTS; sI++) {
+            const module_t *m = &g_mdl_slots[sI];
+            if (m->state != MDL_SLOT_EMPTY &&
+                (m->gpio_claimed & (1u << (unsigned)i)) != 0u) {
+                holder = m->name[0] ? m->name : "a module";
+                break;
+            }
+        }
+        bool claimed = (holder != NULL);
         if (claimed) {
-            mdl_console_puts("  [MDL");
+            mdl_console_puts("  [");
+            mdl_console_puts(holder);
             if (owner != NULL) {
                 mdl_console_puts(", host yielded");
             }

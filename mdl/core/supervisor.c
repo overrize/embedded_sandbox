@@ -361,6 +361,36 @@ static void handle_load(const uint8_t *payload, uint32_t len, bool persist)
         return;
     }
 
+    /*
+     * One command name, one owner [S4].
+     *
+     * find_slot_by_command() returns the first match, so two modules
+     * offering `run` would make typing it a coin toss -- and a silent one,
+     * since both loads succeeded. Refusing the second load turns an
+     * ambiguity that shows up later as "the wrong module ran" into a
+     * refusal that names the module already using it.
+     *
+     * Checked here rather than in the loader because a command name is not
+     * a resource in the res[] sense -- nothing physical collides. What
+     * collides is the console's ability to say who was meant.
+     */
+    if (len >= sizeof(mdl_header_t)) {
+        const mdl_header_t *h = (const mdl_header_t *)payload;
+        if (h->cmd_name[0] != 0) {
+            module_t *other = find_slot_by_command(h->cmd_name);
+            if (other != NULL && other != slot) {
+                mdl_console_puts("[host] refusing: command `");
+                mdl_console_puts(h->cmd_name);
+                mdl_console_puts("` is already ");
+                mdl_console_puts(other->name[0] ? other->name : "another module");
+                mdl_console_puts("'s\r\n");
+                mdl_proto_send_response(MDL_RESP_ERROR,
+                    "that console command name is already taken", 41);
+                return;
+            }
+        }
+    }
+
     mdl_load_status_t vst = mdl_load_validate(slot, payload, len,
                                                 HOST_API_ABI_VERSION,
                                                 MDL_ARCH_ARMV7M);
