@@ -404,3 +404,8 @@ __attribute__((weak)) int host_spi_transfer_impl(int bus, const void *tx,
     (void)bus; (void)tx; (void)rx; (void)len;
     return -1;
 }
+
+/* Weak build id, for a target that does not compile board_buildid.c.
+ * Saying "unknown" is better than refusing to link: the id is
+ * diagnostic, and a build that cannot report it still runs. */
+__attribute__((weak)) const char mdl_build_id[] = "unknown";

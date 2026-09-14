@@ -133,6 +133,13 @@ static void put_u32(uint32_t v)
 
 /* Two hex digits. Separate from put_hex32 because a byte printed as eight
  * digits is unreadable in a dump, which is the only place this is used. */
+/* The one definition of "which firmware is this" lives in a board file
+ * (board_buildid.c, with a Makefile dependency so it is rebuilt every
+ * time). Declared rather than included, because console.c is shared and a
+ * target without that file still has to link -- registry.c carries the
+ * weak default. */
+extern const char mdl_build_id[];
+
 static void put_hex8(uint8_t v)
 {
     static const char d[] = "0123456789ABCDEF";
@@ -742,7 +749,15 @@ static void cmd_json(void)
     mdl_console_puts("{\"abi\":");
     put_u32((uint32_t)HOST_API_ABI_VERSION);
     mdl_console_puts(",\"build\":");
-    json_str(__DATE__ " " __TIME__);
+    /* mdl_build_id, not a second __DATE__ expansion.
+     *
+     * The two disagreed by a second -- console.c and board_buildid.c are
+     * different translation units compiled a moment apart -- so `ver` and
+     * `json` reported different builds of the same firmware. Harmless to a
+     * person and not to an agent, which would read it as a version mismatch.
+     * One definition, and board_buildid.c's Makefile dependency already
+     * guarantees it is rebuilt every time. */
+    json_str(mdl_build_id);
 
     mdl_console_puts(",\"max_slots\":");
     put_u32((uint32_t)MDL_MAX_SLOTS);
