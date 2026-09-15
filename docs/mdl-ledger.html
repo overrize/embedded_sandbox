@@ -1,0 +1,1920 @@
+<title>MDL 验证台账</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;600;700&display=swap">
+<style>
+/* ------------------------------------------------------------------
+   Palette: an instrument panel. Neutrals carry a blue bias so they
+   read as chosen rather than inherited. The accent is the board's own
+   blue LED (PD10); the "verified" green is its green LED (PE15) --
+   the two indicators this project has actually been debugging with.
+   Semantic status colours stay separate from the accent.
+   ------------------------------------------------------------------ */
+:root {
+  --bg:        #E7ECF2;
+  --surface:   #FFFFFF;
+  --surface-2: #F2F5F9;
+  --line:      #CBD5E1;
+  --line-soft: #E2E8F0;
+  --ink:       #0D1520;
+  --ink-2:     #3E4C5D;
+  --ink-3:     #6B7A8C;
+
+  --accent:    #1F6FEB;   /* PD10, the blue LED */
+  --accent-dim:#DCE8FD;
+  --ok:        #14784A;   /* PE15, the green LED */
+  --ok-dim:    #D6EFE2;
+  --warn:      #9A5608;
+  --warn-dim:  #FBEBD4;
+  --idle:      #64748B;
+  --idle-dim:  #E5E9EF;
+
+  --radius: 3px;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #0B121B;
+    --surface:   #131D29;
+    --surface-2: #18242F;
+    --line:      #2C3B4B;
+    --line-soft: #223040;
+    --ink:       #E6EDF5;
+    --ink-2:     #AFBDCC;
+    --ink-3:     #7C8CA0;
+
+    --accent:    #5D9BFF;
+    --accent-dim:#152B4C;
+    --ok:        #4FBE8B;
+    --ok-dim:    #10301F;
+    --warn:      #D79A4E;
+    --warn-dim:  #33240F;
+    --idle:      #8497AC;
+    --idle-dim:  #1C2733;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:        #0B121B;
+  --surface:   #131D29;
+  --surface-2: #18242F;
+  --line:      #2C3B4B;
+  --line-soft: #223040;
+  --ink:       #E6EDF5;
+  --ink-2:     #AFBDCC;
+  --ink-3:     #7C8CA0;
+
+  --accent:    #5D9BFF;
+  --accent-dim:#152B4C;
+  --ok:        #4FBE8B;
+  --ok-dim:    #10301F;
+  --warn:      #D79A4E;
+  --warn-dim:  #33240F;
+  --idle:      #8497AC;
+  --idle-dim:  #1C2733;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+/* --- the eyebrow label: mono, uppercase, letterspaced. Used as the
+       page's only label face, which is the typographic through-line. */
+.lbl {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ---------------- device status strip ---------------- */
+/* Always dark, in both themes: it is a device readout, and a readout
+   that inverts with the page stops reading as one. Every colour here is
+   literal for the same reason -- it must not follow the token set. */
+.strip {
+  background: #0A1017;
+  color: #E6EDF5;
+  border-bottom: 2px solid #1F6FEB;
+}
+.strip-in {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 12px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.strip-in b { color: #7FB0FF; font-weight: 600; }
+.strip-in span { color: #8FA3B8; }
+.strip-in .live {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #4FBE8B;
+}
+.dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #4FBE8B;
+  box-shadow: 0 0 0 3px rgba(79,190,139,.18);
+}
+
+/* ---------------- masthead ---------------- */
+header.mast { padding: 44px 0 30px; }
+header.mast h1 {
+  font-size: clamp(30px, 5vw, 46px);
+  line-height: 1.08;
+  letter-spacing: -0.022em;
+  font-weight: 700;
+  margin: 12px 0 0;
+  text-wrap: balance;
+}
+header.mast p.sub {
+  margin: 14px 0 0;
+  max-width: 60ch;
+  color: var(--ink-2);
+  font-size: 16.5px;
+}
+.thesis {
+  margin-top: 22px;
+  padding: 14px 18px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  font-size: 14.5px;
+  color: var(--ink-2);
+  max-width: 68ch;
+}
+.thesis strong { color: var(--ink); font-weight: 600; }
+
+/* ---------------- priority track ---------------- */
+.track {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 2px;
+  margin: 8px 0 34px;
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+}
+.seg {
+  background: var(--surface);
+  padding: 14px 16px 15px;
+}
+.seg.done { background: var(--ok-dim); }
+.seg .t { font-family: var(--mono); font-weight: 600; font-size: 13px; letter-spacing: .06em; }
+.seg.done .t { color: var(--ok); }
+.seg .d { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; line-height: 1.45; }
+.seg .bar { height: 3px; background: var(--line); margin-top: 10px; }
+.seg.done .bar { background: var(--ok); }
+.seg.open .bar { background: linear-gradient(90deg, var(--warn) 50%, var(--line) 50%); }
+
+/* ---------------- acceptance ----------------
+   Four rows, each with the evidence beside it. A checklist without the
+   measurement next to it is a claim, which is the thing this page exists
+   not to be. */
+.acc { border: 1px solid var(--ok); background: var(--surface); }
+.acc-row {
+  display: grid;
+  grid-template-columns: 26px 1fr 1.1fr;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: start;
+}
+.acc-row:last-child { border-bottom: 0; }
+.acc-row .tick {
+  color: var(--ok); font-size: 17px; line-height: 1.2; font-weight: 700;
+}
+.acc-row .what { font-size: 13.5px; line-height: 1.5; }
+.acc-row .what b { color: var(--ink); }
+.acc-row .ev {
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  color: var(--ink-2); background: var(--surface-2);
+  padding: 8px 10px; border-radius: var(--radius);
+  overflow-x: auto;
+}
+.acc-row .ev em { font-style: normal; color: var(--ok); }
+@media (max-width: 680px) {
+  .acc-row { grid-template-columns: 22px 1fr; }
+  .acc-row .ev { grid-column: 2; }
+}
+
+/* ---------------- arena simulator ----------------
+   The page's one genuinely interactive piece. It is not decoration: the
+   buddy allocator's whole justification is that blocks coalesce on free
+   and that alignment costs internal fragmentation, and both are far
+   easier to see than to read about. The numbers come from the real
+   modules' packed sizes. */
+.sim { border: 1px solid var(--line); background: var(--surface); }
+.sim-bar {
+  display: flex; height: 46px; margin: 0;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+.sim-blk {
+  position: relative;
+  border-right: 1px solid var(--surface);
+  font-family: var(--mono); font-size: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; white-space: nowrap; overflow: hidden;
+  transition: background .18s;
+}
+.sim-blk.free { background: var(--line-soft); color: var(--ink-3); }
+.sim-blk.used { background: var(--accent); }
+.sim-blk.frag { background: var(--warn); }
+.sim-ctl { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 16px; align-items: center; }
+.sim-ctl .lbl { margin-right: 4px; }
+button.mini {
+  font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em;
+  padding: 6px 10px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink-2);
+  border-radius: var(--radius); cursor: pointer;
+}
+button.mini:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+button.mini:disabled { opacity: .4; cursor: not-allowed; }
+button.mini.danger:hover:not(:disabled) { border-color: var(--warn); color: var(--warn); }
+button.mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sim-read {
+  font-family: var(--mono); font-size: 12.5px;
+  padding: 0 16px 14px; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; line-height: 1.7;
+}
+.sim-read b { color: var(--ink); }
+.sim-read .warn { color: var(--warn); }
+.sim-read .ok { color: var(--ok); }
+.sim-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  padding: 0 16px 14px; font-size: 12px; color: var(--ink-3);
+}
+.sim-legend i { font-style: normal; display: inline-flex; align-items: center; gap: 6px; }
+.sim-legend i::before {
+  content: ""; width: 10px; height: 10px; border-radius: 2px;
+}
+.sim-legend .k-u::before { background: var(--accent); }
+.sim-legend .k-f::before { background: var(--warn); }
+.sim-legend .k-e::before { background: var(--line-soft); border: 1px solid var(--line); }
+
+/* ---------------- roadmap ---------------- */
+/* ---------------- roadmap ----------------
+   Deliberately not styled like the ledger: that table records what HAS
+   happened and this one records what has not, so it reads as outline
+   rather than as record -- dashed edges, no filled status pills. */
+.tiers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 26px;
+}
+.tier {
+  border: 1px dashed var(--line);
+  background: var(--surface);
+  padding: 14px 16px 15px;
+}
+.tier.block { border-color: var(--warn); border-style: solid; }
+.tier .t {
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  letter-spacing: .06em; color: var(--ink-2);
+}
+.tier.block .t { color: var(--warn); }
+.tier .d { font-size: 12.5px; color: var(--ink-2); margin-top: 5px; line-height: 1.45; }
+
+ul.road { list-style: none; padding: 0; margin: 0; border: 1px dashed var(--line); background: var(--surface); }
+ul.road li { padding: 13px 16px; border-bottom: 1px dashed var(--line-soft); }
+ul.road li:last-child { border-bottom: 0; }
+ul.road li.no { background: var(--surface-2); }
+ul.road .id {
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  color: var(--accent); margin-right: 10px;
+}
+ul.road li.no .id { color: var(--idle); text-decoration: line-through; }
+ul.road .h { font-weight: 600; display: inline; }
+ul.road .b { color: var(--ink-2); font-size: 13.5px; line-height: 1.55; margin-top: 4px; }
+
+.insight {
+  margin: 18px 0 0;
+  padding: 15px 18px;
+  border-left: 3px solid var(--ok);
+  background: var(--surface);
+  font-size: 13.5px; color: var(--ink-2); line-height: 1.6;
+}
+.insight .k {
+  display: block; font-weight: 600; color: var(--ink);
+  margin-bottom: 6px; font-size: 14px;
+}
+.insight + .insight { margin-top: 12px; }
+.insight.warn { border-left-color: var(--warn); }
+
+/* ---------------- comparison ---------------- */
+.cmp-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+table.cmp { border-collapse: collapse; width: 100%; min-width: 720px; }
+table.cmp th, table.cmp td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: top;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+table.cmp thead th {
+  font-family: var(--mono);
+  font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 500;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+/* Our column is the subject of the page, so it carries the accent rail and
+   the only tinted ground; the others stay plain so the contrast means
+   something rather than decorating every cell. */
+table.cmp thead th.us { color: var(--accent); }
+table.cmp td.us, table.cmp th.us {
+  background: var(--accent-dim);
+  border-left: 2px solid var(--accent);
+  border-right: 1px solid var(--line-soft);
+}
+table.cmp tbody th {
+  text-align: left; font-weight: 600; color: var(--ink);
+  white-space: nowrap; width: 1%;
+}
+table.cmp tr:last-child td, table.cmp tr:last-child th { border-bottom: 0; }
+table.cmp .m {
+  font-family: var(--mono); font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.cmp-key {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  margin: 12px 0 0; font-size: 12.5px; color: var(--ink-2);
+}
+.cmp-key span::before {
+  content: ""; display: inline-block;
+  width: 8px; height: 8px; border-radius: 2px;
+  margin-right: 7px; vertical-align: 1px;
+}
+.cmp-key .k-m::before { background: var(--ok); }
+.cmp-key .k-s::before { background: var(--idle); }
+.cmp-key .k-w::before { background: var(--warn); }
+.tag {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .06em;
+  padding: 1px 5px; border-radius: var(--radius); margin-left: 6px;
+  white-space: nowrap;
+}
+.tag.meas { background: var(--ok-dim); color: var(--ok); }
+.tag.unmeas { background: var(--idle-dim); color: var(--idle); }
+.caveat {
+  margin-top: 16px; padding: 13px 16px;
+  border-left: 3px solid var(--warn);
+  background: var(--surface);
+  font-size: 13.5px; color: var(--ink-2); line-height: 1.6;
+}
+.caveat strong { color: var(--ink); font-weight: 600; }
+
+/* ---------------- section ---------------- */
+section { margin-top: 46px; }
+h2 {
+  font-size: 21px;
+  letter-spacing: -0.012em;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.sec-note { color: var(--ink-2); font-size: 14.5px; margin: 0 0 18px; max-width: 66ch; }
+
+/* ---------------- verification tally ---------------- */
+.tally {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  border: 1px solid var(--line);
+  background: var(--line-soft);
+  gap: 1px;
+}
+.tally div { background: var(--surface); padding: 15px 16px 16px; }
+.tally .n {
+  font-family: var(--mono);
+  font-size: 27px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.tally .k { margin-top: 7px; font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
+.n.ok { color: var(--ok); } .n.acc { color: var(--accent); }
+.n.warn { color: var(--warn); } .n.idle { color: var(--idle); }
+
+/* ---------------- controls ---------------- */
+.controls {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: center; margin-bottom: 14px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+button.chip {
+  font-family: var(--mono);
+  font-size: 11.5px; letter-spacing: .06em;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+button.chip:hover { border-color: var(--accent); color: var(--ink); }
+button.chip[aria-pressed="true"] {
+  background: var(--ink); border-color: var(--ink); color: var(--surface);
+}
+button.chip:focus-visible, input:focus-visible, tr.row:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+input.search {
+  flex: 1 1 190px; min-width: 150px;
+  font-family: var(--mono); font-size: 12.5px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}
+input.search::placeholder { color: var(--ink-3); }
+
+/* ---------------- ledger ---------------- */
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; }
+thead th {
+  font-family: var(--mono);
+  font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 500;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+tbody tr.row { border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+tbody tr.row:last-child { border-bottom: 0; }
+tbody tr.row:hover { background: var(--surface-2); }
+tbody td { padding: 11px 14px; vertical-align: top; font-size: 14px; }
+td.id {
+  font-family: var(--mono); font-weight: 600; font-size: 12.5px;
+  color: var(--accent); white-space: nowrap; width: 1%;
+}
+td.task { line-height: 1.45; }
+td.pri { width: 1%; }
+.ptag {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .07em;
+  padding: 2px 6px; border: 1px solid var(--line); color: var(--ink-3);
+  border-radius: var(--radius); white-space: nowrap;
+}
+td.st { width: 1%; white-space: nowrap; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .05em;
+  padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+}
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.v { color: var(--ok); background: var(--ok-dim); }
+.pill.c { color: var(--accent); background: var(--accent-dim); }
+.pill.p { color: var(--warn); background: var(--warn-dim); }
+.pill.u { color: var(--idle); background: var(--idle-dim); }
+tr.detail > td {
+  padding: 0 14px 14px 14px;
+  color: var(--ink-2); font-size: 13.5px; line-height: 1.6;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line-soft);
+}
+tr.detail code, td.task code, .matrix code, p code, li code {
+  font-family: var(--mono); font-size: .88em;
+  background: var(--accent-dim); color: var(--ink);
+  padding: 1px 5px; border-radius: var(--radius);
+}
+.empty { padding: 26px 14px; color: var(--ink-3); font-size: 14px; }
+
+/* ---------------- peripheral matrix ---------------- */
+.matrix { border: 1px solid var(--line); background: var(--surface); }
+.mrow {
+  display: grid;
+  grid-template-columns: 132px 1fr 132px;
+  gap: 14px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: baseline;
+}
+.mrow:last-child { border-bottom: 0; }
+.mrow .name { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.mrow .what { font-size: 13.5px; color: var(--ink-2); line-height: 1.5; }
+.mrow .stat { text-align: right; }
+.mrow.split { background: var(--surface-2); }
+@media (max-width: 620px) {
+  .mrow { grid-template-columns: 1fr; gap: 6px; }
+  .mrow .stat { text-align: left; }
+}
+
+/* ---------------- benchmark ---------------- */
+.bench { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.card { border: 1px solid var(--line); background: var(--surface); padding: 18px; }
+.card h3 { margin: 6px 0 2px; font-size: 16px; font-weight: 600; }
+.card p.cap { margin: 0 0 16px; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.barrow { margin-bottom: 13px; }
+.barrow .bl {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12.5px; margin-bottom: 5px; gap: 10px;
+}
+.barrow .bl span:first-child { color: var(--ink-2); }
+.barrow .bl b {
+  font-family: var(--mono); font-weight: 600;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.bt { height: 9px; background: var(--line-soft); overflow: hidden; }
+.bf { height: 100%; background: var(--accent); }
+.bf.g { background: var(--ok); }
+.bf.w { background: var(--warn); }
+.note {
+  margin-top: 4px; padding-top: 13px; border-top: 1px solid var(--line-soft);
+  font-size: 13px; color: var(--ink-2); line-height: 1.55;
+}
+.note strong { color: var(--ink); font-weight: 600; }
+
+/* ---------------- open items ---------------- */
+ul.open { list-style: none; padding: 0; margin: 0; border: 1px solid var(--line); background: var(--surface); }
+ul.open li { padding: 14px 16px; border-bottom: 1px solid var(--line-soft); font-size: 14px; line-height: 1.55; }
+ul.open li:last-child { border-bottom: 0; }
+ul.open .h { font-weight: 600; margin-bottom: 3px; }
+ul.open .h .pill { margin-left: 8px; vertical-align: 2px; }
+ul.open .b { color: var(--ink-2); font-size: 13.5px; }
+
+footer {
+  margin-top: 48px; padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+  display: flex; flex-wrap: wrap; gap: 6px 20px;
+}
+
+/* --- console replay: the device's own voice, in its own typeface ------- */
+.term {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+}
+@media (max-width: 720px) { .term { grid-template-columns: minmax(0, 1fr); } }
+
+.term-main { min-width: 0; border-right: 1px solid var(--line-soft); }
+@media (max-width: 720px) { .term-main { border-right: 0; border-bottom: 1px solid var(--line-soft); } }
+
+.term-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-2);
+  font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+  letter-spacing: .04em;
+}
+.term-head .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-dim);
+}
+.term-head .sp { margin-left: auto; }
+
+.term-out {
+  margin: 0; padding: 14px 16px;
+  height: 330px; overflow: auto;
+  font-family: var(--mono); font-size: 12px; line-height: 1.65;
+  color: var(--ink-2); white-space: pre-wrap; word-break: break-word;
+  background: var(--surface);
+}
+.term-out .p { color: var(--accent); }               /* the prompt + echo */
+.term-out .o { color: var(--ink-2); }
+.term-out .hit { color: var(--ok); font-weight: 500; }
+.term-out .bad { color: var(--warn); }
+.term-out .meta {
+  color: var(--ink-3); font-style: normal;
+  border-left: 2px solid var(--line); padding-left: 8px; display: block;
+  margin: 2px 0 2px 0;
+}
+
+.term-in {
+  display: flex; align-items: center; gap: 8px;
+  border-top: 1px solid var(--line-soft); padding: 8px 12px 8px 16px;
+  background: var(--surface-2);
+}
+.term-in span { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.term-in input {
+  flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
+  font-family: var(--mono); font-size: 12px; color: var(--ink);
+  padding: 3px 0;
+}
+.term-in input:focus-visible { box-shadow: 0 0 0 2px var(--accent-dim); border-radius: 2px; }
+
+.term-side { padding: 12px 14px; }
+.term-side .lbl { margin-bottom: 8px; }
+.term-side button {
+  display: block; width: 100%; text-align: left; margin-bottom: 5px;
+  font-family: var(--mono); font-size: 11.5px;
+  padding: 5px 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink-2);
+  border-radius: var(--radius);
+  transition: background .12s, color .12s, border-color .12s;
+}
+.term-side button:hover { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.term-side button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.term-side .hint {
+  margin-top: 10px; font-size: 11px; line-height: 1.55; color: var(--ink-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+
+<div class="strip">
+  <div class="strip-in">
+    <span>BUILD <b>Sep 14 2026 22:14:49</b></span>
+    <span>ABI <b>v10</b></span>
+    <span>TARGETS <b>6/6</b></span>
+    <span>MDL <b>27</b></span>
+    <span>MCU <b>AT32F435VCT7 @ 288MHz</b></span>
+    <span class="live"><span class="dot"></span>COM5 · 2.0 十四项：12 已验证 · 2 未认领</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="lbl">嵌入式沙箱 · 动态模块加载框架</div>
+  <h1>MDL 验证台账</h1>
+  <p class="sub">
+    在 Cortex-M4 上不重新烧录地更换 MCU 功能，用 MPU 把模块关进沙箱，
+    对标 LuaTOS / MicroPython 但不付出解释器的代价。
+  </p>
+  <div class="thesis">
+    这张表的主轴不是"做完了多少"，而是<strong>哪些结论是在真机上验过的</strong>。
+    本项目的规矩是：<strong>编译通过不算完成</strong>。因此状态分「已验证」（真机跑过）
+    与「完成」（代码就位、尚未在硬件上证明）两级，并且一个多日未复跑的结论
+    不会被当作现在仍然成立。
+  </div>
+</header>
+
+<section style="margin-top:30px">
+  <div class="lbl" style="margin-bottom:8px">优先级序列</div>
+  <div class="track">
+    <div class="seg done">
+      <div class="t">P0 清零</div>
+      <div class="d">今天就在漏的洞：引脚卸载恢复、关写缓冲</div>
+      <div class="bar"></div>
+    </div>
+    <div class="seg done">
+      <div class="t">P1 清零</div>
+      <div class="d">没有它就没资格对标：中断派发、看门狗语义、引脚级仲裁</div>
+      <div class="bar"></div>
+    </div>
+    <div class="seg done">
+      <div class="t">P2 清零</div>
+      <div class="d">把领先变成可证明：构建期拒绝、基准、MCP 闭环</div>
+      <div class="bar"></div>
+    </div>
+    <div class="seg done">
+      <div class="t">P3 清零</div>
+      <div class="d">重要但不紧急：flash 持久化、原子热替换</div>
+      <div class="bar"></div>
+    </div>
+    <div class="seg done">
+      <div class="t">外设序列 收官</div>
+      <div class="d">GPIO / I2C / UART / ADC / SPI 五项全部真机验证；TIMER 未开始</div>
+      <div class="bar"></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>台账</h2>
+  <p class="sec-note">
+    点任意一行看根因与备注。过滤器按状态与类别筛选，计数随之更新。
+  </p>
+
+  <div class="tally" id="tally"></div>
+
+  <div class="controls" style="margin-top:18px">
+    <div class="chips" id="stChips"></div>
+    <div class="chips" id="catChips"></div>
+    <input class="search" id="q" type="search" placeholder="搜索任务、根因、寄存器名…" aria-label="搜索任务">
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">#</th>
+          <th scope="col">任务</th>
+          <th scope="col">优先级</th>
+          <th scope="col">状态</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>外设能力</h2>
+  <p class="sec-note">
+    MDL 对任何外设寄存器都没有 MPU 区域——这正是沙箱的价值所在。每一次传输都是一次
+    受控调用，host 逐次校验「这条总线是你声明的」和「这个缓冲区在你自己内存里」。
+  </p>
+  <div class="matrix">
+    <div class="mrow">
+      <div class="name">GPIO / EXINT</div>
+      <div class="what">引脚认领、边沿中断、两段式派发、事件合并与丢失计数</div>
+      <div class="stat"><span class="pill v">已验证</span></div>
+    </div>
+    <div class="mrow">
+      <div class="name">I2C</div>
+      <div class="what">
+        <code>i2c_write</code> / <code>i2c_read</code> / <code>i2c_write_read</code>。
+        板载 AT24C64 在 <code>0x50</code>（原理图预测的地址），读回
+        <code>44 61 74 61 20 6E 6F 77</code> = ASCII <strong>"Data now"</strong>，
+        另一地址读全 0xFF——<strong>两处内容不同，证明寻址与重复起始位都真的在工作</strong>
+      </div>
+      <div class="stat"><span class="pill v">已验证</span></div>
+    </div>
+    <div class="mrow">
+      <div class="name">UART</div>
+      <div class="what">
+        USART3（PB10/PB11）一根跳线做真全双工回环：<code>MDL</code> 发出去、
+        <code>4D 44 4C</code> 收回来，逐字节相符。
+        ISR → 环形缓冲 → 事件 → <code>module_event()</code> → <code>read()</code>
+        全链路通，<strong>0 丢失</strong>（11 投递 / 25 合并 / peak 16/s）
+      </div>
+      <div class="stat"><span class="pill v">已验证</span></div>
+    </div>
+    <div class="mrow">
+      <div class="name">ADC</div>
+      <div class="what">
+        一个固件给出 10 个通道（<code>MDL_RES_ADC(n)</code> 即通道号，展开成引脚）。
+        真机跟随触发信号：低 <code>0..5</code> / 高 <code>~4045</code>，摆幅
+        <strong>4066 counts</strong>，各态噪声约 1 LSB。
+        毫伏用内部 1.2V 基准换算，<strong>不假设 3.3V 轨</strong>
+      </div>
+      <div class="stat"><span class="pill v">已验证</span></div>
+    </div>
+    <div class="mrow">
+      <div class="name">SPI</div>
+      <div class="what">
+        SPI3（PB3/PB4/PB5，板载 SPI NOR 就在这条总线上，CS = PE3）。
+        读 JEDEC ID 而非做回环：<code>C8 40 16</code> → GigaDevice GD25Q32, 4MB。
+        <strong>只有一个特定答案能通过</strong>，时钟相位错、MISO/MOSI 反、
+        mux 错都混不过去——回环则四种全能混过
+      </div>
+      <div class="stat"><span class="pill v">已验证</span></div>
+    </div>
+    <div class="mrow">
+      <div class="name">TIMER</div>
+      <div class="what">仲裁层已能声明与判冲突，但 vtable 尚无对应操作</div>
+      <div class="stat"><span class="pill u">未开始</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>与 LuaTOS / MicroPython 的对比</h2>
+  <p class="sec-note">
+    三者解决的是同一个问题——<strong>不重新烧录就改变 MCU 的行为</strong>——但走的是
+    完全不同的路。下表按结构性事实排列，不按印象。
+  </p>
+
+  <div class="cmp-wrap">
+    <table class="cmp">
+      <thead>
+        <tr>
+          <th scope="col">&nbsp;</th>
+          <th scope="col" class="us">MDL（本项目）</th>
+          <th scope="col">LuaTOS</th>
+          <th scope="col">MicroPython</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">执行方式</th>
+          <td class="us">原生机器码，位置无关，直接在 Cortex-M4 上跑</td>
+          <td>Lua 字节码，VM 解释</td>
+          <td>Python 字节码，VM 解释</td>
+        </tr>
+        <tr>
+          <th scope="row">计算速度</th>
+          <td class="us">
+            与静态固件相同<span class="tag meas">实测</span><br>
+            <span class="m">沙箱内循环 12.45 / 空循环 10.45 cycles</span><br>
+            差值来自循环体本身，不是沙箱税
+          </td>
+          <td>解释执行，与原生相差一个量级以上<span class="tag unmeas">未实测</span></td>
+          <td>同左<span class="tag unmeas">未实测</span></td>
+        </tr>
+        <tr>
+          <th scope="row">跨边界代价</th>
+          <td class="us">
+            <span class="m">213.57 cycles ≈ 0.74 µs</span><span class="tag meas">实测</span><br>
+            每次 host 调用一次性支付，不摊在每条指令上
+          </td>
+          <td>VM 到 C 的调用开销<span class="tag unmeas">未实测</span></td>
+          <td>同左<span class="tag unmeas">未实测</span></td>
+        </tr>
+        <tr>
+          <th scope="row">内存隔离</th>
+          <td class="us">
+            <strong>MPU 硬件边界</strong>，模块在非特权态执行；
+            越界立即 fault，记录跨复位存活
+          </td>
+          <td>VM 内部检查，脚本与运行时同一地址空间，无硬件边界</td>
+          <td>同左</td>
+        </tr>
+        <tr>
+          <th scope="row">GC 停顿</th>
+          <td class="us"><strong>没有 GC</strong>，也就没有这一类不确定性</td>
+          <td>增量 GC</td>
+          <td>标记-清除 GC</td>
+        </tr>
+        <tr>
+          <th scope="row">中断派发</th>
+          <td class="us">
+            两段式：特权 ISR 记录事件 + 唤醒任务，模块 handler 非特权执行<br>
+            <span class="m">1.7 / 4.6 / 5.9 µs（min/avg/max, 308 样本）</span><span class="tag meas">实测</span>
+          </td>
+          <td>回调在 VM 中执行，可能与 GC 竞争<span class="tag unmeas">未实测</span></td>
+          <td>同左<span class="tag unmeas">未实测</span></td>
+        </tr>
+        <tr>
+          <th scope="row">资源冲突</th>
+          <td class="us">
+            <strong>构建期 + 加载期两道，按物理引脚判</strong>：
+            <code>MDL_RES_I2C(1)</code> 在 host 侧展开成引脚再比对，
+            名字不同也能查出撞同一根线
+          </td>
+          <td>运行时由使用者自行避免</td>
+          <td>运行时由使用者自行避免</td>
+        </tr>
+        <tr>
+          <th scope="row">坏模块</th>
+          <td class="us">
+            加载前完整校验；校验不过则<strong>正在跑的模块不受影响</strong>
+            <span class="tag meas">实测</span>
+          </td>
+          <td>脚本异常在运行时抛出</td>
+          <td>同左</td>
+        </tr>
+        <tr>
+          <th scope="row">掉电存活</th>
+          <td class="us">flash 末 16K 持久化，重插后自动恢复并重新布防中断<span class="tag meas">实测</span></td>
+          <td>脚本存在文件系统里</td>
+          <td>同左</td>
+        </tr>
+        <tr>
+          <th scope="row">更新粒度</th>
+          <td class="us">
+            <strong>每个功能是一个独立的 .mdl</strong>，单独编译打包、单独导入。
+            改哪个推哪个——不重编固件，也不碰其他 MDL<br>
+            <span class="m">i2c_scan: 编译+链接+打包 270 ms，产物 1024 B</span>
+          </td>
+          <td>单个 .lua 脚本，单独上传</td>
+          <td>单个 .py 模块，单独上传</td>
+        </tr>
+        <tr>
+          <th scope="row">同时驻留</th>
+          <td class="us">
+            <strong>目前一次一个</strong>——单槽位，推入新的会替换正在跑的
+            （先校验后拆除，坏镜像不会毁掉现有的）。
+            多槽位是尚未做的工作，不是设计上的取舍
+          </td>
+          <td>多个模块可同时存在</td>
+          <td>多个模块可同时存在</td>
+        </tr>
+        <tr>
+          <th scope="row">编写门槛</th>
+          <td class="us">
+            <strong>C，主机上要有交叉编译工具链</strong>——三者中最高，
+            且<strong>不能在设备上直接改</strong>：没有 REPL，
+            循环是「改 → 编译 → 推」而不是「改 → 跑」
+          </td>
+          <td>Lua，即写即跑，无需工具链</td>
+          <td>Python，即写即跑，生态最大</td>
+        </tr>
+        <tr>
+          <th scope="row">库生态</th>
+          <td class="us"><strong>几乎没有</strong>，外设驱动是本项目一个个写的</td>
+          <td>面向 IoT 的成套库</td>
+          <td>三者中最丰富</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="cmp-key">
+    <span class="k-m">带「实测」的是本项目在 AT32F435 真机上取得的数字</span>
+    <span class="k-s">带「未实测」的只陈述结构差异，没有在本项目中测量过</span>
+  </div>
+
+  <div class="caveat">
+    <strong>关于那些「未实测」。</strong>
+    LuaTOS 和 MicroPython 的性能数字<strong>没有在本项目里测过</strong>，所以表里
+    不给它们具体数值——凭印象填一个量级进去，正好会毁掉这张表唯一的价值。
+    表中关于它们的描述只涉及<strong>结构性事实</strong>（解释执行、有 GC、无 MPU 边界），
+    那些不需要测量也成立。<br><br>
+    <strong>它们赢在哪里也照实写。</strong>最后三行不是客套：
+    Lua 和 Python 改完直接跑，MDL 要在主机上过一遍工具链；
+    它们能同时驻留多个模块，我们目前一次只能跑一个；
+    它们有成熟的库，我们的每个外设驱动都是一行行写出来的。
+    <strong>这个方案的适用条件是「性能和确定性值得付出工具链的代价」</strong>——
+    不满足这个条件时，它们是更好的选择。
+  </div>
+</section>
+
+<section>
+  <h2>基准</h2>
+  <p class="sec-note">
+    288MHz，写缓冲关闭（<code>ACTLR.DISDEFWBUF</code> 已关，否则所有数字虚低）。
+    DWT CYCCNT 取值，由 MDL 在沙箱<em>内部</em>自己测量。
+  </p>
+  <div class="bench">
+
+    <div class="card">
+      <div class="lbl">每次迭代</div>
+      <h3>沙箱内的指令不打折</h3>
+      <p class="cap">模块是原生代码，不是字节码。两条线之差就是循环体本身的开销。</p>
+
+      <div class="barrow">
+        <div class="bl"><span>空循环（基线）</span><b>10.45 cycles</b></div>
+        <div class="bt"><div class="bf g" style="width:84%"></div></div>
+      </div>
+      <div class="barrow">
+        <div class="bl"><span>沙箱内原生循环</span><b>12.45 cycles</b></div>
+        <div class="bt"><div class="bf" style="width:100%"></div></div>
+      </div>
+
+      <div class="note">
+        差值 <strong>2.0 cycles</strong>，来自循环体自身，<strong>不是沙箱税</strong>。
+        MPU 不在取指路径上收费——它要么放行，要么触发 fault。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">跨越边界时</div>
+      <h3>代价集中在闸口</h3>
+      <p class="cap">沙箱的成本不是连续摊在每条指令上，而是一次性付在每次 host 调用上。</p>
+
+      <div class="barrow">
+        <div class="bl"><span>受控 host 调用</span><b>213.57 cycles</b></div>
+        <div class="bt"><div class="bf w" style="width:100%"></div></div>
+      </div>
+      <div class="barrow">
+        <div class="bl"><span>折合时间</span><b>≈ 0.74 µs</b></div>
+        <div class="bt"><div class="bf w" style="width:100%"></div></div>
+      </div>
+
+      <div class="note">
+        含提权、参数校验、指针归属检查与降权返回。
+        所以 ABI 的设计取向是<strong>少而粗的调用</strong>，而不是多而细的。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="lbl">中断 → 非特权 handler · 308 样本</div>
+      <h3>派发延迟</h3>
+      <p class="cap">
+        ISR 运行在特权态，所以它只做两件事：记录事件、唤醒模块任务。
+        MDL 自己的 handler 稍后在那个任务里非特权地跑。
+      </p>
+
+      <div class="barrow">
+        <div class="bl"><span>最快</span><b>1.7 µs</b></div>
+        <div class="bt"><div class="bf g" style="width:29%"></div></div>
+      </div>
+      <div class="barrow">
+        <div class="bl"><span>平均</span><b>4.6 µs</b></div>
+        <div class="bt"><div class="bf" style="width:78%"></div></div>
+      </div>
+      <div class="barrow">
+        <div class="bl"><span>最慢</span><b>5.9 µs</b></div>
+        <div class="bt"><div class="bf w" style="width:100%"></div></div>
+      </div>
+
+      <div class="note">
+        这是诚实且不可回避的代价：事件经过一次任务唤醒和上下文切换才到达 MDL，
+        <strong>不是中断延迟</strong>。比这更紧的时限做不到，改 ABI 也没用——
+        那种活必须是 host 代码。<br>
+        <span style="color:var(--ink-3)">本次回归未复跑（需人工按键），沿用 09-08 测得值。</span>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2>未结项</h2>
+  <p class="sec-note">按"挡住什么"排序，不按工作量。</p>
+  <ul class="open">
+    <li>
+      <div class="h">H10 的 QEMU 那半<span class="pill p">受阻</span></div>
+      <div class="b">
+        PendSV 那个 bug 已由 AT32 间接答完（共用同一份 <code>port.c</code> 与
+        <code>module_task.c</code>）。剩下的是可移植性回归。
+        QEMU <strong>其实装着</strong>，但和原生 <code>gcc.exe</code> 一样被
+        Windows 应用控制策略拦掉（退出码 <code>0xC0E90002</code>）——需要在本机放行。
+      </div>
+    </li>
+    <li>
+      <div class="h">S4 的拒绝路径没跑过<span class="pill c">完成</span></div>
+      <div class="b">
+        两个 MDL 用同一个命令名会被拒——<strong>代码写了，真机上没触发过</strong>，
+        因为板上的三个测试模块没有重名的。测试模块 <code>cmd_clash</code>（232 B）已经打好：
+        它声明 <code>uart_echo</code> 的命令名，<strong>并且故意什么资源都不认领</strong>——
+        否则加载器会先因引脚拒绝它，命令名那条路径照样不执行，通过了也证明不了任何事。
+        <strong>等下一次烧录后推进去</strong>，它要么让 S4 变成「已验证」，要么当场暴露。
+      </div>
+    </li>
+    <li>
+      <div class="h">A6 驱动移植脚手架<span class="pill u">未认领</span></div>
+      <div class="b">
+        把 MicroPython / LuaTOS 的 C 驱动翻译成 MDL 形状的骨架 + 检查清单。
+        库的价值最终体现在<strong>「推一个 .mdl 就能用一个新器件」</strong>，而不是能不能跑别人的源码。
+      </div>
+    </li>
+    <li>
+      <div class="h">S8 解释器 MDL<span class="pill u">未认领</span></div>
+      <div class="b">
+        化解 REPL 取舍的那个选项，但它是<strong>独立规模的工程</strong>，
+        建议单独立项而不是顺手做。验收另计：解释器 MDL 与原生 MDL 同时驻留，
+        前者崩溃时后者继续跑。
+      </div>
+    </li>
+    <li>
+      <div class="h">不存在的 I2C 地址要等超时<span class="pill p">已知未修</span></div>
+      <div class="b">
+        NACK 与超时现在都落到同一条等待路径上，所以扫满 112 个地址约 <strong>45 s</strong>。
+        功能正确，只是慢——记在这里是<strong>为了它不被悄悄忘掉</strong>，
+        而不是因为它挡住了什么。
+      </div>
+    </li>
+    <li>
+      <div class="h">X1 / X2 跨架构<span class="pill u">已搁置</span></div>
+      <div class="b">RV32 PIC 可行性与 ESP32-C3 集成。按"只关注 P 序列"的要求搁置，未动。</div>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>2.0 验收 · 四条全部成立</h2>
+  <p class="sec-note">
+    §8.5 定的标准，沿用本项目一贯规矩——<strong>编译通过不算</strong>。
+    每条后面是它的证据，而不是一个勾。
+  </p>
+
+  <div class="acc">
+    <div class="acc-row">
+      <div class="tick">✓</div>
+      <div class="what">两个独立 MDL <b>同时运行</b>，各自声明各自的引脚</div>
+      <div class="ev">0: sw3_irq&nbsp;&nbsp;text 0x20020000&nbsp;&nbsp;RUNNING<br>
+        1: uart_echo&nbsp;text 0x20020800&nbsp;&nbsp;RUNNING<br>
+        2: i2c_scan&nbsp;&nbsp;text 0x20021800&nbsp;&nbsp;RUNNING<br>
+        <span style="color:var(--ink-3)">三块独立的 buddy 块</span></div>
+    </div>
+    <div class="acc-row">
+      <div class="tick">✓</div>
+      <div class="what">第三个想抢已占引脚的 <b>被拒并指名持有者</b></div>
+      <div class="ev">sw3_blink → ERROR<br>
+        needs PA3, <em>already held by sw3_irq</em></div>
+    </div>
+    <div class="acc-row">
+      <div class="tick">✓</div>
+      <div class="what">
+        事件<b>只投给声明者</b>。用软件触发 100 次中断，
+        并先测出「读取动作本身」的自增量再减掉
+      </div>
+      <div class="ev">对照组：每次调用自增 (6,3)<br>
+        槽位0（声明了 SW3）：<em>+(1, 99) = 恰好 100</em><br>
+        槽位1（未声明）：+(6, 3) <em>= 与对照组相同</em></div>
+    </div>
+    <div class="acc-row">
+      <div class="tick">✓</div>
+      <div class="what">
+        <b>一个崩溃，其他继续跑。</b>邻居越界写宿主内存，被 MPU 拦下
+      </div>
+      <div class="ev">cfsr=0x82 (DACCVIOL+MMARVALID) mmfar=0x20000000<br>
+        板子未复位，另外两个仍 RUNNING<br>
+        幸存者回环仍逐字节正确：<em>4D 44 4C</em></div>
+    </div>
+  </div>
+
+  <div class="insight warn">
+    <span class="k">而隔离的最后一环曾经是断的</span>
+    <code>arch_pc_in_range(pc, g_mdl_slot.text_lo, ...)</code> —— 槽位 1 的模块崩溃，
+    PC 不在<strong>槽位 0</strong> 的 text 范围内，于是被判成<strong>宿主 fault → 复位整块板子</strong>。<br><br>
+    <strong>崩溃被 MPU 成功隔离了，然后恢复动作把所有人一起带走。</strong>
+    给每个模块独立 MPU 区域的全部意义就是隔离，而它在最后一步失效。<br><br>
+    这是同一个错误在本次重构里的<strong>第五次</strong>出现——过渡别名
+    <code>g_mdl_slot</code> 在已多槽位化的代码里静悄悄意味着「槽位 0」，
+    <strong>而且零警告编译通过</strong>。五处全都过了六个目标的构建；
+    <strong>只有真机上放两个模块才暴露</strong>。
+  </div>
+</section>
+
+
+<section>
+  <h2>控制台 · 真机会话回放</h2>
+  <p class="sec-note">
+    下面每条输出都是<strong>从真机会话里抄下来的</strong>，不是示意。
+    敲一条命令，或从右边点一条。设备上没记录过的命令会说明这一点，
+    <strong>而不是编一段像样的输出</strong>——那正是这个项目反复在防的东西。
+  </p>
+
+  <div class="term">
+    <div class="term-main">
+      <div class="term-head">
+        <span class="dot" aria-hidden="true"></span>
+        <span>COM5 · USB CDC · 115200</span>
+        <span class="sp">三个 MDL 驻留中</span>
+      </div>
+      <pre class="term-out" id="termOut" tabindex="0" aria-live="polite" aria-label="控制台输出"></pre>
+      <div class="term-in">
+        <span aria-hidden="true">mdl&gt;</span>
+        <input id="termIn" type="text" autocomplete="off" spellcheck="false"
+               aria-label="输入控制台命令" placeholder="试试 json、slots、ver、i2c scan 1…">
+      </div>
+    </div>
+    <div class="term-side">
+      <div class="lbl">有记录的命令</div>
+      <div id="termCmds"></div>
+      <div class="hint">
+        <code>help</code> 列的是<strong>宿主</strong>的命令；
+        MDL 自己的命令在 <code>slots</code> 里，由 supervisor 派发——
+        控制台不再自己判断谁该接。
+      </div>
+    </div>
+  </div>
+
+  <div class="insight" style="margin-top:18px">
+    <span class="k">为什么 json 这条命令值得单独做</span>
+    其余每条命令都是写给人看的：对齐的列、写全的单位、被拒时的解释。
+    <strong>agent 去解析那些，是在赌一个没人承诺过的格式</strong>，
+    而这个赌注会在下次有人加宽一列时<strong>静默失效</strong>。<br><br>
+    而它上真机的第一次就暴露出一个「两个真相源」：<code>ver</code> 报
+    <code>20:51:12</code>，<code>json</code> 报 <code>20:51:11</code>——两个
+    <code>__DATE__</code> 在不同编译单元里展开。<strong>对人是无害的秒级抖动，
+    对 agent 是版本不匹配</strong>，而它没办法判断哪个是真的。
+    单一定义本来就有，是我在旁边又做了一份。
+  </div>
+</section>
+
+<section>
+  <h2>arena 分配器 · 动手试</h2>
+  <p class="sec-note">
+    buddy 分配器的两个核心性质——<strong>释放时合并</strong>和<strong>对齐带来内部碎片</strong>
+    ——看一眼比读一段容易。下面是真实的 128K 池和真实模块的打包尺寸，
+    加载/卸载会像设备上一样走同一套定阶与合并逻辑。
+  </p>
+
+  <div class="sim">
+    <div class="sim-bar" id="simBar"></div>
+    <div class="sim-ctl" id="simBtns"></div>
+    <div class="sim-read" id="simRead"></div>
+    <div class="sim-legend">
+      <i class="k-u">模块实际用到的</i>
+      <i class="k-f">对齐造成的内部碎片（付出了但用不上）</i>
+      <i class="k-e">空闲</i>
+    </div>
+  </div>
+
+  <div class="insight" style="border-left-color:var(--warn)">
+    <span class="k">试试这个顺序，它就是为什么不做碎片整理</span>
+    装满四个模块，然后<strong>只卸载中间那个</strong>，再装一个大的。总空闲够，
+    但最大连续块不够——而<strong>整理碎片需要移动一个正在运行的模块</strong>，
+    它的栈和堆里有指向自己的指针，外面没人改得了。
+    所以分配器<strong>如实报告</strong>：「空闲 X，最大块 Y，这个要 Z」，
+    而不是偶尔神秘地失败。
+  </div>
+</section>
+
+<section>
+  <h2>2.0 计划</h2>
+  <p class="sec-note">
+    起点是对比表里暴露的两项差距：<strong>同时驻留</strong>（我们一次一个）与
+    <strong>即写即跑</strong>（我们要过工具链）。下面先是四条分析，
+    其中两条的结论是<strong>不做那件显而易见的事</strong>。
+  </p>
+
+  <div class="insight">
+    <span class="k">竞品的「同时驻留」没有槽位这个概念</span>
+    MicroPython 和 LuaTOS 的模块是一个堆里的对象，同一个 VM、同一个地址空间、
+    同一个特权级，数量只受 RAM 限制。<strong>而它们的无限并存恰恰来自没有隔离</strong>
+    ——一个堆、一个 GC、一个特权级，模块 A 的 bug 直接破坏模块 B 的数据。
+    所以对标的不是它们的数字，是<strong>我们能负担几个隔离槽位</strong>。<br><br>
+    核实过：MPU 区域是<strong>每任务的、切换时重编程</strong>，所以它
+    <strong>不限制槽位数量</strong>。真正的约束是 2 的幂自然对齐。
+  </div>
+
+  <div class="insight">
+    <span class="k">槽位数不该写死——但碎片问题有个干净解</span>
+    每个 MDL 的大小由业务复杂度决定，固定划分要么浪费要么不够。两端的先验已各有一半：
+    packer 知道 <code>text/data/bss</code>，设备的 <code>arena</code> 命令知道容量，
+    缺的是协商。<br><br>
+    <strong>整理碎片需要追踪栈堆里的指针，而追踪器要么漏指针要么过度保留</strong>
+    ——那正是 GC 的工作，而我们拒绝了 GC。但那个风险来自细粒度分配，
+    <strong>而我们没有细粒度分配</strong>：一个 MDL 就是一整块，整块分配整块释放，
+    它的堆和栈都在块内。块外指向块内的引用只有宿主侧那几个，全部可枚举且已在
+    <code>reclaim_module()</code> 里清除。<br><br>
+    <strong>而 MPU 的对齐要求反过来给了现成解：buddy 分配器。</strong>
+    2 的幂对齐正是 buddy 的前提，它释放时自动合并、内部碎片有界、
+    <strong>不需要追踪任何指针</strong>。唯一诚实的代价是内部碎片
+    （5K 的 MDL 占 8K 块），而它可预测、可提前报告。
+  </div>
+
+  <div class="insight">
+    <span class="k">库：拿不走源码，但能拿走全部值钱的部分</span>
+    它们的库是<strong>给一个我们没有的解释器用的源码</strong>。但那些库里最值钱的
+    不是 Python/Lua——是底下那层 <strong>C 驱动</strong>（两者的驱动本来就是 C）和
+    <strong>器件知识</strong>：寄存器映射、初始化时序、勘误规避。那些与语言无关。<br><br>
+    策略是 <strong>API 形状兼容而非源码兼容</strong>，让移植成为近乎逐行的机械翻译。
+    用户端的落点是：<strong>装一个新器件就是推一个 .mdl，立刻能用——不重启、不重跑、不重烧。</strong>
+  </div>
+
+  <div class="insight warn">
+    <span class="k">REPL：不做，但取舍被第四个选项化解了</span>
+    REPL 要执行没有预先编译过的代码。内置解释器等于放弃原生速度这个立论；
+    而实测一次完整往返是 <span class="m">715 ms</span>，差距不在速度，
+    在于<strong>要人手动触发</strong>和<strong>设备上无法探索</strong>。<br><br>
+    <strong>第四个选项：把解释器做成一个可选的 MDL。</strong>
+    它在沙箱里跑、占一份 arena、不加载时成本为零，需要速度的模块继续是原生的。
+    于是这不再是全局二选一，<strong>而是逐模块选择</strong>——
+    而这只有在有槽位机制的前提下才成立，所以它是多槽位的红利。
+  </div>
+
+  <div class="insight warn">
+    <span class="k">做 S2 时发现计划的顺序排错了</span>
+    <code>reclaim_slot()</code> 里有一句 <code>mdl_events_disarm_all()</code>。
+    单槽位正确；<strong>多槽位下回收槽位 A 会把槽位 B 的中断一并下掉，而且是静悄悄的</strong>。
+    这不是加个参数能补的——事件层只有一个任务句柄、一个队列、一份 armed 掩码。<br><br>
+    我把「事件路由」（S3）排在「多槽位加载」（S2）之后，<strong>理由是前者听起来像后者的完善。
+    实际是反的</strong>：没有路由，多槽位加载一落地就带着一个真实缺陷，
+    而症状（某个模块的按键突然不灵）离原因很远。<br><br>
+    按排序准则自己的例外条款处理：<strong>改计划、记明原因</strong>，
+    而不是绕过去或先欠着。S3 提前，与 S2 合并完成。
+  </div>
+
+  <div class="insight">
+    <span class="k">Agent 优先重排了整张表</span>
+    如果编码主要由 agent 完成，<strong>工具链成本几乎归零</strong>——这恰恰暴露出
+    那张对比表是按人类用户假设写的。真正要紧的变成机器可读的错误和机器可验证的状态。<br><br>
+    最关键的一点：<strong>本项目的验证纪律本身就是一个 agent 安全特性。</strong>
+    「已验证」与「完成」的区分，对人是自律，<strong>对 agent 是护栏</strong>——
+    它阻止 agent 把没测过的代码当成能用的。
+    竞品没有这个区分，因为人会自己去试；<strong>agent 不会，除非你告诉它这里有区别。</strong>
+  </div>
+
+  <div class="tiers" style="margin-top:28px">
+    <div class="tier" style="border-style:solid;border-color:var(--ok)">
+      <div class="t" style="color:var(--ok)">S0 · 已完成</div>
+      <div class="d">host API 用任务句柄认调用者——ABI 里传的 id 是模块能撒谎的 id</div>
+    </div>
+    <div class="tier" style="border-style:solid;border-color:var(--ok)">
+      <div class="t" style="color:var(--ok)">S1 · 已完成</div>
+      <div class="d">buddy 分配器 + 逐槽位堆；加载器按模块实际大小取内存</div>
+    </div>
+    <div class="tier" style="border-style:solid;border-color:var(--ok)">
+      <div class="t" style="color:var(--ok)">S2/S3/S4/S6/S7 · 已验证</div>
+      <div class="d">槽位表、跨槽位仲裁、逐槽位事件路由与看门狗、命令名唯一</div>
+    </div>
+    <div class="tier" style="border-style:solid;border-color:var(--ok)">
+      <div class="t" style="color:var(--ok)">S5 · 已验证</div>
+      <div class="d">双 bank 持久化整组；真断电重插后三个模块全部回来</div>
+    </div>
+    <div class="tier" style="border-style:solid;border-color:var(--ok)">
+      <div class="t" style="color:var(--ok)">W1 / W2 · 已验证</div>
+      <div class="d">存盘即推送 0.48 s；控制台直接戳硬件，覆盖 REPL 的主要用途且不含解释器</div>
+    </div>
+    <div class="tier" style="border-style:solid;border-color:var(--ok)">
+      <div class="t" style="color:var(--ok)">A4 / A5 · 已验证</div>
+      <div class="d">一行 JSON 给 agent 读；MCP 能回答「这条是真机验过的还是只是编译过」</div>
+    </div>
+    <div class="tier">
+      <div class="t">A6 / S8 · 未认领</div>
+      <div class="d">驱动移植脚手架；解释器 MDL（独立规模，建议单独立项）</div>
+    </div>
+  </div>
+
+  <ul class="road">
+    <li>
+      <span class="id">S0</span><span class="h">host API 需要知道调用者是谁</span>
+      <div class="b">
+        四个外设驱动里的 <code>checked_*()</code> 全都直接读 <code>g_mdl_slot</code>
+        <strong>单例</strong>（各 4 处）。多槽位下「这条总线是你声明的」
+        <strong>必须先能回答「你是谁」</strong>。调用发生在 MDL 自己的任务里，
+        <code>xTaskGetCurrentTaskHandle()</code> 能反查槽位——但每个 gated 入口都要过这层。
+        <strong>其余任务全压在它上面。</strong>
+      </div>
+    </li>
+    <li>
+      <span class="id">S1</span><span class="h">buddy 分配器</span>
+      <div class="b">2 的幂对齐是 MPU 的硬性要求，而那正是 buddy 的前提。释放时自动合并；
+        粒度是「一个 MDL 一块」所以不需要追踪指针。内部碎片如实报告，不做整理。</div>
+    </li>
+    <li>
+      <span class="id">S2</span><span class="h">跨槽位资源仲裁（MDL ↔ MDL）</span>
+      <div class="b">现在的冲突只有「MDL vs host」。R3 的引脚展开语义<strong>已经是对的</strong>，
+        需要的是把比对范围从一个槽位扩到全部。<strong>这是多槽位最容易出安全问题的地方</strong>：
+        两个 MDL 同时驱动一根线。</div>
+    </li>
+    <li>
+      <span class="id">S3</span><span class="h">事件路由到正确的槽位</span>
+      <div class="b"><code>host_events.c</code> 现在只有一个 <code>s_module_task</code>。
+        GPIO 边沿该投给<strong>声明了那个引脚</strong>的槽位，不是广播。</div>
+    </li>
+    <li>
+      <span class="id">S4–S7</span><span class="h">命令名跨槽位唯一 · 持久化一组 · 逐槽位看门狗 · status 分列</span>
+      <div class="b">都是单槽位时被隐含掉的假设，多槽位后需要显式化。</div>
+    </li>
+    <li>
+      <span class="id">S8</span><span class="h">解释器作为一个可选 MDL</span>
+      <div class="b">化解 REPL 取舍的那个选项。Lua 比 Python 小得多，是更现实的第一步。
+        <strong>验收另计</strong>：解释器 MDL 与原生 MDL 同时驻留，前者崩溃时后者继续跑——
+        那就同时证明了隔离和「逐模块选择语言」。</div>
+    </li>
+    <li>
+      <span class="id">W1 · W2</span><span class="h">watch 模式 · 硬件 shell</span>
+      <div class="b">W1 把 715 ms 变成无感（存盘即重建推送）。
+        W2 让控制台直接调 host API：<code>i2c read 1 0x48 2</code>、
+        <code>spi xfer 3 9F 00 00 00</code>——覆盖 REPL 在嵌入式上的主要用途，
+        <strong>不需要解释器</strong>。</div>
+    </li>
+    <li>
+      <span class="id">A4–A6</span><span class="h">结构化输出 · MCP 暴露验证状态 · 驱动移植脚手架</span>
+      <div class="b">A5 是其中最要紧的：agent 需要能问「这个结论是真机验过的还是只是编译过」，
+        而这个区分原先<strong>只以文字形式存在于 maintain.md 里</strong>。A4/A5 已验证，A6 未认领。<br><br>
+        <strong>这里我还违反过一次自己刚立的排序准则</strong>：计划排完就建议「A4/A5 不依赖多槽位，
+        现在就能做」——按依赖排完序，又换一把尺子往前挑。<strong>而那个建议本身也是错的</strong>：
+        A4 是给 <code>status</code>/<code>pins</code> 加结构化输出，
+        而 S7 正是「<code>status</code> 按槽位分列」——先做 A4 等于等着被 S7 重写。</div>
+    </li>
+    <li class="no">
+      <span class="id">内置 REPL</span><span class="h">明确不做</span>
+      <div class="b">把解释器烧进固件，等于让所有人替少数人的交互需求付性能代价。
+        做成 MDL 则是逐模块选择。<strong>记为有理由的决定，不是「以后再说」。</strong></div>
+    </li>
+  </ul>
+
+  <div class="caveat" style="border-left-color:var(--ok)">
+    <strong>2.0 的验收标准</strong>，沿用本项目一贯规矩——<strong>编译通过不算</strong>：
+    真机上同时跑起 ADC 采集 + SPI 记录两个独立 MDL，各自声明各自的引脚；
+    第三个想抢已占引脚的 MDL <strong>在构建期就被拒</strong>；
+    并且<strong>其中一个崩溃时另一个继续运行</strong>。<br><br>
+    最后那条是多槽位真正的价值——也是它比单槽位难的全部原因。
+  </div>
+</section>
+
+<footer>
+  <span>AT32F435VCT7 · 256K flash / 384K SRAM · LQFP100</span>
+  <span>UYUP-RPI-A-2.4</span>
+  <span>maintain.md 为唯一协作文档</span>
+  <span>页面源码在仓库里：docs/mdl-ledger.html</span>
+</footer>
+
+</div>
+
+<script>
+const DATA = [
+  {id:"R1", cat:"加固", pri:"P0", st:"v", t:"卸载时把引脚恢复到安全态",
+   d:"<code>reclaim_module()</code> 原先完全不碰 GPIO 配置：MDL 把引脚配成什么样，卸载后就留成什么样，下一个 MDL 继承到一个状态未知的引脚。多外设仲裁的全部工作都压在这块地基上。"},
+  {id:"R2", cat:"加固", pri:"P0", st:"v", t:"关掉 DISDEFWBUF（写缓冲）",
+   d:"它设 <code>ACTLR.DISDEFWBUF</code>，全系统每条 store 都变慢。这是 bring-up 工具（H8/H12 都靠它定位），但留着它测出来的性能数字全是虚低的——拿错的数去对标 LuaTOS 会当场翻车。"},
+  {id:"H2", cat:"缺陷", pri:"P1", st:"v", t:"看门狗误杀 → watchdog_feed 进 ABI",
+   d:"原先的喂狗信号是「调过任何 host API」。F1 一落地，常驻 MDL 会阻塞等事件——几秒不调 API 是正常状态，会被当场误杀。先改语义，再做 F1。"},
+  {id:"F1", cat:"功能", pri:"P1", st:"v", t:"中断 / 回调（两段式派发）",
+   d:"ABI v3。ISR 在特权态，所以只做记录事件 + 唤醒任务两件事，MDL 的 handler 非特权地跑在那个任务里。事件队列溢出策略先定死：合并 + 计数，绝不静默丢弃。"},
+  {id:"R3", cat:"加固", pri:"P1", st:"v", t:"资源类型扩展 + 引脚级冲突展开",
+   d:"关键设计点：<code>MDL_RES_I2C(1)</code> 必须在 host 侧展开成物理引脚再比对——两个名字不同的声明可以撞在同一根线上，只比名字必漏判。"},
+  {id:"B2", cat:"构建", pri:"P2", st:"v", t:"packer manifest 提取 + 引脚级冲突比对",
+   d:"「强制修改」的正确位置是构建期，不是加载期。让构建失败，而不是让加载失败——加载期拒绝是最后一道防线，不是第一道。"},
+  {id:"P5", cat:"基准", pri:"P2", st:"v", t:"基准测试（对标 LuaTOS）",
+   d:"三个数全部真机取得，308 样本。第一版设计是错的：它按事件打印，32 个样本全丢——需要你盯着看的基准是巧合，不是测量。改成累计 min/avg/max 藏在命令后面，而且这次修复没有重新烧录。"},
+  {id:"A1", cat:"工具", pri:"P2", st:"v", t:"MCP server 骨架 + stdio 收发",
+   d:"手写 JSON-RPC，不引入 mcp SDK。真机端到端通过。"},
+  {id:"A2", cat:"工具", pri:"P2", st:"v", t:"compile_check 工具",
+   d:"离线默认；<code>against_device</code> 可选在线核对 ABI 与槽位。"},
+  {id:"A3", cat:"工具", pri:"P2", st:"v", t:"deploy / remove / status / logs / describe",
+   d:"真机 deploy/unload/logs 全通；构建失败不碰设备已验证。"},
+  {id:"F2", cat:"功能", pri:"P3", st:"v", t:"flash 持久化",
+   d:"flash 末 16K，镜像先写、头最后写。MPU 窗口开在每次操作内部并置于临界区——第一版只在整个擦除外面关了 MPU 却留着中断，而 <strong>PendSV 会在每次上下文切换时重新打开 MPU</strong>。"},
+  {id:"F3", cat:"功能", pri:"P3", st:"v", t:"原子热替换",
+   d:"先校验后拆除：坏镜像被拒时旧 MDL 仍在跑。拆成纯函数 <code>mdl_load_validate()</code>（不写任何东西）与 <code>mdl_load()</code>。"},
+  {id:"D1", cat:"外设", pri:"—", st:"v", t:"I2C 驱动（ABI v7）",
+   d:"空总线扫描 112 个地址全部干净返回。做这个时挖出一个从 M2 就存在的洞：<code>ptr_owned_by_module()</code> 漏了模块栈，任何用局部变量当缓冲区的 MDL 都被拒——错在危险的反方向，拒绝合法调用且错误码与真越界相同。<br><br><strong>而 I2C 其实一直没工作过，直到三层问题被剥开</strong>：①失败后不复位导致误报（地址会漂移）；②扫描把「NACK」和「超时」折叠成同一个「没器件」，掩盖了真相；③根因——vendor 的 timeout 参数是<strong>裸自旋计数而非毫秒</strong>，我传 100，288MHz 下不到一微秒，<strong>每次传输都在总线动起来之前就放弃了</strong>。我的常数叫 <code>I2C_TIMEOUT_MS</code>，注释还断言了单位——<strong>名字成了那个论断唯一的证据</strong>。"},
+  {id:"H19", cat:"缺陷", pri:"—", st:"v", t:"S0：host API 认得调用者是谁",
+   d:"身份用<strong>任务句柄</strong>而非让 MDL 自报 id——ABI 里传 id 的话 MDL 就能声称自己是别人；任务句柄由内核分配、宿主读取，模块伪造不了。<br><br>五处改成问调用者，每处在多槽位下都是真实漏洞，其中最重的是<code>ptr_owned_by_module</code>：<strong>一个 MDL 递来的指针拿另一个 MDL 的 arena 去校验并放行</strong>。另外「忙的 MDL 替卡死的喂狗」会让看门狗形同虚设。<br><br>真机回归<strong>行为零变化</strong>——单槽位下这是纯形状改动，正是要验证的。"},
+  {id:"D2", cat:"外设", pri:"—", st:"v", t:"UART 驱动（ABI v8）",
+   d:"流式而非事务式，所以接收走中断进环形缓冲、<code>read()</code> 不阻塞返回计数、溢出丢最新并计数（带完整前缀的截断流还能解析，中间有洞的通常不能）。<br><br>验证绕了三次弯，错误是同一个：我一直在问「怎么把信号弄到 PA3 上」，而该问的是「哪个 USART 的两个脚都引出来了」。改用 USART3（PB10/PB11）一根跳线做真回环后立刻通过，<code>4D 44 4C</code> 逐字节相符。<br><br>第一次跑时测试自己没看出来它通了：<code>module_cmd()</code> 与 <code>module_event()</code> 由同一个常驻任务消费，所以命令里等事件等的是<strong>一件由它自己的执行所阻止的事</strong>。是两个自相矛盾的数字（测试说 0、累计说 16，而 16 正是 hello 行的长度）把它暴露的。"},
+  {id:"D3", cat:"外设", pri:"—", st:"v", t:"ADC 驱动（ABI v9）",
+   d:"资源 id 是<strong>通道号</strong>而非实例号——ADC 是一个外设带很多通道。所以一个固件把 10 个通道全给出去，<strong>不用再猜排针上有什么</strong>（USART2 那三轮换来的教训）。<br><br>真机跟随触发：低 <code>0..5</code>、高 <code>~4045</code>，摆幅 4066 counts，17 次脉冲。静止读数 ~0 分不清「器件输出 0V」和「根本没接上」——<strong>只有让电压动起来才是验证</strong>。<br><br>毫伏用内部 1.2V 基准，<code>mV = raw × 1200 / ref</code>，VDDA 约掉。假设 3.3V 而实际 3.28V 是每个读数 0.6% 的隐形偏差。"},
+  {id:"D4", cat:"外设", pri:"—", st:"v", t:"SPI 驱动（ABI v10）",
+   d:"原语是<strong>一次全双工传输</strong>，不是 write/read 分开——SPI 物理上就是同一个时钟沿移出一位、移入一位。拆开是在发明线上不存在的区分。<br><br>片选不归驱动管：需要 CS 的 MDL 自己声明 GPIO 去拨。CS 时序每个器件不同，写死的策略对三分之一器件是错的。<br><br>速度向下取整而非取最近：标称 1MHz 的器件跑 1.125MHz 可能千分之一出错，而那种故障会被归咎于接线查一周。<strong>跑慢从不弄坏器件。</strong><br><br>测试读板载 Flash 的 JEDEC ID 而非做回环：<code>C8 40 16</code> = GigaDevice GD25Q32。回环只证明外设能跟自己说话；读 ID 证明总线够到真器件、时钟极性对、片选框对、字节序对——<strong>只有一个答案能通过</strong>。<br><br>判定曾写窄过一次：硬编码 Winbond 的 <code>0xEF</code>，把正常总线判成 unexpected。而原理图在 W25Q32 旁边就写着「或其它相兼容的产品」——<strong>我读到了却没反映进判定</strong>。"},
+  {id:"H17", cat:"缺陷", pri:"—", st:"v", t:"原理图推翻三处板级假设",
+   d:"用户提供 UYUP-RPI-A-2.4 原理图后，<code>board_pins.def</code> 新增 53 条<strong>排针可达性</strong>记录——这张表回答的是「够不够得着」，和「这个脚归谁」是两个不同的问题，而前者被猜了三次，每次花掉一轮真机测试。<br><br>同时查出：<strong>I2C1 实际在 PB8/PB9</strong>（带 10k 上拉），我们记的 PB6/PB7 在这板上是摄像头接口、没有上拉；<strong>USART2 实际在 PD5/PD6</strong>，我们记的 PA2/PA3 里 PA3 根本没引出——<strong>这才是接收三轮不可测的真正原因，不是芯片行为</strong>。"},
+  {id:"H18", cat:"缺陷", pri:"—", st:"v", t:"GPIO 白名单存在于两个表，只加一半",
+   d:"<code>board_pins.def</code> 管仲裁（索引↔物理脚），<code>host_api.c</code> 管驱动（端口/掩码/时钟/方向/EXINT）。给 PE3 只加了前者，结果是<strong>仲裁层放行了声明、驱动层却不认识这个索引</strong>。已补齐并在代码里写明两表必须逐索引一致——这是结构缺陷，不是笔误。"},
+  {id:"S0", cat:"多槽位", pri:"2.0", st:"v", t:"host API 认得调用者是谁",
+   d:"身份用<strong>任务句柄</strong>而非让 MDL 自报 id——ABI 里传 id 的话 MDL 就能声称自己是别人。五处改成问调用者，其中最重的是 <code>ptr_owned_by_module()</code>：<strong>一个 MDL 递来的指针拿另一个 MDL 的 arena 去校验并放行</strong>。真机回归零行为变化，正是通过条件。"},
+  {id:"S1", cat:"多槽位", pri:"2.0", st:"v", t:"buddy 分配器 + 逐槽位堆",
+   d:"MPU 要求 2 的幂且自然对齐——看似负担，<strong>却正好是 buddy 的前提</strong>。真机三轮加载/卸载后 arena 每次都回到 <strong>128K free / 最大 128K</strong>；关键是后半句，只合并一半会停在 64K。<br><br>为它补的测试当场抓到一个一直存在的 bug：<code>free()</code> 把每个块记成 0 字节，而复用条件是 <code>size >= n</code>——<strong>空闲链是只写的</strong>。跑一次看不出来（8 块 → 4 块），而在此之前没有任何测试 MDL 调用过 alloc/free。"},
+  {id:"S2", cat:"多槽位", pri:"2.0", st:"v", t:"槽位表 + 跨槽位仲裁 + supervisor",
+   d:"4 个槽位——数量是<strong>策略而非硬件限制</strong>：MPU 区域每任务重编程，不限制驻留数。<br><br>仲裁改的是<strong>搜索宽度而非语义</strong>（R3 的引脚展开本来就对），带 <code>exclude</code> 参数因为热替换时被替换的模块还持有引脚。<br><br><strong>语义变化</strong>：同名替换、异名并存。原来两个抢同一根线的模块靠「后推的把前一个销毁」轮流工作；现在它们共存直到冲突被<strong>指名拒绝</strong>。"},
+  {id:"S3", cat:"多槽位", pri:"2.0", st:"v", t:"逐槽位事件路由",
+   d:"一个队列 → 每槽一个（否则能读到邻居的事件）；一个任务句柄 → 每槽一个（否则边沿唤醒<strong>最后注册</strong>的模块）；一份 armed 掩码 → 每槽一份（否则卸载一个静悄悄关掉另一个的中断）。<br><br>路由用 <code>pin → slot</code> 平表，arm/disarm 时从任务上下文写、ISR 只读——<strong>中断处理程序不该遍历加载器的数据结构</strong>。"},
+  {id:"T1", cat:"工具", pri:"2.0", st:"v", t:"evt：软件触发中断",
+   d:"用户提的。用 EXINT 自带的软件触发，<strong>走和真实边沿完全相同的路径</strong>。解决了按键测试的四个问题，而第四个是能力问题而非效率问题：<strong>逐槽位路由根本没法用按键测</strong>——必须能「触发 A 声明的引脚，检查 B 一无所获」。<br><br>真机：250 个边沿 = 2 投递 + 248 合并 + <strong>0 丢失</strong>，一个不差。"},
+  {id:"S4", cat:"多槽位", pri:"2.0", st:"c", t:"命令名跨槽位唯一",
+   d:"<code>find_slot_by_command()</code> 返回第一个匹配，两个模块都叫 <code>run</code> 的话敲下去就是掷硬币——<strong>而且是无声的</strong>，因为两次加载都成功了。现在第二次加载被拒并指名占用者。<br><br><strong>但这条拒绝路径从来没有在真机上跑过</strong>：板上那三个测试模块没有两个重名的。代码就位、编译通过、逻辑自洽——<strong>而这正是本项目区分「完成」与「已验证」要防的那种东西</strong>，所以它标着「完成」。<br><br>查在 supervisor 而非加载器：命令名不是 res[] 意义上的资源，<strong>碰撞的不是物理线，是控制台说清「谁被指名」的能力</strong>。"},
+  {id:"H20", cat:"缺陷", pri:"2.0", st:"v", t:"同一个错误在重构中出现五次",
+   d:"过渡别名 <code>g_mdl_slot</code> 在已多槽位化的代码里静悄悄意味着「槽位 0」，<strong>零警告编译通过</strong>。<br><br>五处：trampoline 的 9 个辅助函数（推送成功但 slots 显示 0 个）、<code>host_gpio_yielded_to_module()</code>（一根线两个主人）、<code>request_unload()</code>、控制台命令派发（<code>find_slot_by_command()</code> 写好了却从没被调用到）、<strong>fault 分类（崩溃被隔离，恢复动作却复位整块板子）</strong>。<br><br>那个别名让 160 处引用的重构可审阅，代价就是这个——值得，但要知道代价在哪。"},
+  {id:"S5", cat:"多槽位", pri:"2.0", st:"v", t:"持久化一组（双 bank）",
+   d:"「保存的那个 MDL」在四槽位下不再是一个说法——重新上电后跑着原有三个中的一个，不叫扛过掉电，叫<strong>丢了三分之二而且没吭声</strong>。<br><br>必须做成双 bank：往一组里追加时，<strong>已有条目就住在将要被擦掉的扇区里</strong>。写非活动 bank 时活动 bank 全程可读，写完才生效——任何时刻断电上一组都完好。<code>seq</code> 打破平局，<strong>那正是这套方案存在要防的唯一失效模式</strong>。<br><br>真机：真断电重插，三个全部恢复，且 <code>uart_echo</code> 的回环仍逐字节正确——<strong>「恢复」和「恢复成能用的」是两件事</strong>。"},
+  {id:"S6", cat:"多槽位", pri:"2.0", st:"v", t:"逐槽位看门狗与 parking",
+   d:"<code>parked_until_tick</code> 原先是单例字段——一个模块卡住，<strong>所有模块一起被罚站</strong>。<br><br>真机验到的是故障路径那一半：邻居越界写宿主内存被 MPU 拦下后，<strong>只有出事的槽位被回收</strong>，另外两个继续 RUNNING 且功能完好。<strong>看门狗超时触发的 parking 本身没有单独测过</strong>——所以板上记的是「机制已验证」，不是「已验证」。"},
+  {id:"S7", cat:"多槽位", pri:"2.0", st:"v", t:"status / pins 按槽位分列",
+   d:"单槽位时输出里那个 <code>[MDL]</code> 是隐含的「那个模块」。四个槽位下它不再是答案——<strong>加载被拒时真正有用的问题是「哪个邻居占着」</strong>，所以 <code>pins</code> 现在报出持有者的名字，<code>slots</code> 一行一个槽位。"},
+  {id:"W1", cat:"工具", pri:"2.0", st:"v", t:"watch 模式：存盘即重建推送",
+   d:"715 ms 的往返本来就不慢，<strong>慢的是要人手动触发</strong>。改文件即重建、构建失败就不碰设备（保住板上正在跑的那个）。真机 <strong>0.48 s</strong>，达到了它自己文档里写的 &lt;1 s。<br><br>过程里有一次<strong>提交信息谎报了修复</strong>：<code>--no-mock</code> 的传参静默失效，而我按「代码写了」写进了提交信息。后来用一条诚实的提交信息更正。"},
+  {id:"W2", cat:"工具", pri:"2.0", st:"v", t:"控制台扩成硬件 shell（不需要解释器）",
+   d:"REPL 在嵌入式上的主要用途是<strong>在设备上戳硬件</strong>，而那不需要一个语言运行时：<code>i2c scan 1</code>、<code>i2c read 1 0x48 2</code>、<code>led</code>/<code>btn</code> 直接敲。<br><br>关键是<strong>它会拒绝任何 MDL 已声明的总线</strong>——否则控制台就成了绕过仲裁的后门，而仲裁正是这个项目的立论。<br><br><strong>计划里写的 <code>spi xfer</code> 没做</strong>：<code>spi</code> 目前只报告总线配置。台账记实际做到的，不记计划。"},
+  {id:"A4", cat:"工具", pri:"2.0", st:"v", t:"json：全部活状态一行输出",
+   d:"其余每条命令都是写给人看的。<strong>agent 去解析那些，是在赌一个没人承诺过的格式</strong>，而赌注会在下次有人加宽一列时静默失效。<br><br>一个对象而不是 <code>json &lt;topic&gt;</code> 系列：agent 几乎总是要全貌，串口上跑 N 个来回才是慢的地方，而且<strong>一件东西比六件容易保持正确</strong>。"},
+  {id:"A5", cat:"工具", pri:"2.0", st:"v", t:"MCP 暴露「验证过没有」",
+   d:"「已验证 vs 完成」的区分对人是自律，<strong>对 agent 是护栏</strong>——而在此之前它只以文字形式活在 maintain.md 里，agent 读不到。<br><br>数据源就是那份认领板本身，<strong>不另建一份 JSON</strong>：两份「什么验过了」的清单一周内必然分歧，而 agent 读到的会是过期的那份。<br><br>解析器错了两次，症状相同——<strong>板上标着「已验证」的任务被报成 unknown</strong>。一次是扫了全文所有表格，一次是锚定 <code>## 8</code> 而那节底下有两张表。<strong>低报验证状态的工具比没有更糟</strong>：agent 会去重做已完成的工作。最终锚定表头本身。"},
+  {id:"H21", cat:"缺陷", pri:"2.0", st:"v", t:"同一台设备报出两个构建号",
+   d:"<code>ver</code> 说 <code>20:51:12</code>，<code>json</code> 说 <code>20:51:11</code>——两个 <code>__DATE__ \" \" __TIME__</code> 在<strong>不同编译单元</strong>里展开，相差一秒。<br><br>对人是无害抖动；<strong>对 agent 是版本不匹配</strong>，而它没办法判断哪个是真的。而单一定义早就存在（<code>board_buildid.c</code>，Makefile 挂了依赖保证每次必重编），是写 <code>cmd_json</code> 时又展开了一次。<strong>和 GPIO 白名单两张表、控制台重复派发、A5 解析器是同一个形状</strong>：已有唯一来源，却在旁边又做了一份。"},
+  {id:"B1", cat:"构建", pri:"—", st:"v", t:"MDL_MODULE_RESOURCES 宏 + __mdl_resources 段",
+   d:"ABI v2。真机拒绝 PA9 认领，报错点名持有者。"},
+  {id:"H16", cat:"缺陷", pri:"—", st:"v", t:"loader 把合法 kind 上界硬编码成 TIMER",
+   d:"ADC 是 kind=5，加载直接被拒 <code>malformed resource claim</code>。修法不是把 <code>TIMER</code> 改成 <code>ADC</code>，而是加 <code>MDL_RES_KIND_MAX</code> 哨兵让上界从枚举推导——否则下次做 SPI 会再踩一次，而且<strong>编译期什么都发现不了</strong>（<code>5 &gt; 4</code> 是合法 C）。"},
+  {id:"H1", cat:"缺陷", pri:"—", st:"c", t:"真机 HIL 配置修正",
+   d:"料号 / Flash 长度 / HEXT 全改；五目标重编通过。"},
+  {id:"H3", cat:"缺陷", pri:"—", st:"c", t:"显式置 MEMFAULTENA",
+   d:"<code>mpu_armv7m.c</code> 的 <code>arch_setup_regions()</code>。"},
+  {id:"H4", cat:"缺陷", pri:"—", st:"c", t:"修复 M0/M1/M3 构建腐坏 + 加 build.ps1",
+   d:"没人构建的目标就是已经坏了的目标。"},
+  {id:"H5", cat:"缺陷", pri:"—", st:"v", t:"24MHz PLL + USB 48MHz",
+   d:"真机 <code>clk</code> 读回 288000000。"},
+  {id:"H6", cat:"缺陷", pri:"—", st:"c", t:"非特权 trampoline 访问 host RAM",
+   d:"走 <code>freertos_system_calls</code> 提权。"},
+  {id:"H7", cat:"缺陷", pri:"—", st:"v", t:"USB CDC 文本控制台（与 MDLC 帧共用一个口）",
+   d:"固件按字节增量匹配magic 来解复用文本与二进制帧，所以一根线既是控制台也是导入通道。"},
+  {id:"H8", cat:"缺陷", pri:"—", st:"v", t:"M4 真机 BusFault 定位",
+   d:"根因：链接脚本 <code>.privileged_data</code> 未被启动代码初始化。"},
+  {id:"H9", cat:"缺陷", pri:"—", st:"v", t:"M4 arena 边界为 0",
+   d:"拆出 <code>sandbox_bounds_init()</code>；M3 内联版还漏了 guard 边界。"},
+  {id:"H11", cat:"缺陷", pri:"—", st:"v", t:"宿主任务漏 portPRIVILEGE_BIT → MUNSTKERR",
+   d:"M2/M3/M4/QEMU 全部补上；模块任务保持非特权。"},
+  {id:"H12", cat:"缺陷", pri:"—", st:"v", t:"模块加载必炸设备（8B 空模块也炸）",
+   d:"根因：<code>module_task.c</code> 把 <code>tskMPU_REGION_*</code> 这些 ARMv8-M 抽象标志当作 RASR 位直接传给 ARMv7-M 端口 → AP=000（连特权态都拒）且 SIZE 被从 8K 撑大到 64K，把模块栈整个吞掉。用端口自己的宏加 TEX/S/C/B 修复。"},
+  {id:"H13", cat:"缺陷", pri:"—", st:"v", t:"fault 记录跨复位存活 + fault 命令",
+   d:"<code>.noinit</code> 段；fault 后主动复位而非锁死。H12 与 H15 两个根因都是靠它读出来的。"},
+  {id:"H14", cat:"缺陷", pri:"—", st:"c", t:"build.ps1 把编译失败报成 BUILD OK",
+   d:"旧逻辑靠 <code>Test-Path firmware.elf</code>，陈旧 elf 即绿灯。改用 make 退出码 + error/warning 分离。"},
+  {id:"H15", cat:"缺陷", pri:"—", st:"v", t:"host->log() 用半主机，无调试器时必炸",
+   d:"<code>bkpt 0xAB</code> 在 <code>C_DEBUGEN=0</code> 时升级为 HardFault(DEBUGEVT)。改为可替换 sink，M4 走 USB 控制台。"},
+  {id:"H10", cat:"缺陷", pri:"—", st:"p", t:"复跑 QEMU 目标",
+   d:"bug 部分已由 AT32 间接验证；目标已修复两处腐坏并纳入 <code>build.ps1</code> 默认集。真跑受阻于 Windows 应用控制策略。"},
+  {id:"X1", cat:"跨架构", pri:"—", st:"u", t:"RV32 PIC 可行性 POC",
+   d:"<code>gp</code> 基址 + <code>-mno-relax</code> + packer 加 <code>R_RISCV_RELATIVE</code>；裸 RV32 目标，不碰 ESP-IDF。"},
+  {id:"X2", cat:"跨架构", pri:"—", st:"u", t:"ESP32-C3 集成评估",
+   d:"依赖 X1；主成本是 ESP-IDF 的 FreeRTOS 分支与上游 MPU 端口合并。"},
+];
+
+const ST = {
+  v: {label:"已验证", cls:"v", hint:"真机跑过"},
+  c: {label:"完成",   cls:"c", hint:"代码就位，未在硬件上证明"},
+  p: {label:"部分",   cls:"p", hint:"有明确未验证的部分"},
+  u: {label:"待认领", cls:"u", hint:"未开始"},
+};
+
+let fSt = "all", fCat = "all", fQ = "";
+
+const el = (id) => document.getElementById(id);
+
+function tally() {
+  const c = {v:0, c:0, p:0, u:0};
+  DATA.forEach(r => c[r.st]++);
+  el("tally").innerHTML = [
+    ['<span class="n ok">'   + c.v + "</span>", "已验证<br>真机跑过"],
+    ['<span class="n acc">'  + c.c + "</span>", "完成<br>代码就位，未上硬件"],
+    ['<span class="n warn">' + c.p + "</span>", "部分<br>有明确未验证的部分"],
+    ['<span class="n idle">' + c.u + "</span>", "待认领<br>未开始"],
+    ['<span class="n">'      + DATA.length + "</span>", "条目<br>合计"],
+  ].map(([n,k]) => "<div>" + n + '<div class="k">' + k + "</div></div>").join("");
+}
+
+function chips() {
+  const st = [["all","全部"]].concat(Object.keys(ST).map(k => [k, ST[k].label]));
+  el("stChips").innerHTML = st.map(([k,l]) =>
+    '<button class="chip" data-st="' + k + '" aria-pressed="' + (k === fSt) + '">' + l + "</button>"
+  ).join("");
+  const cats = ["all"].concat([...new Set(DATA.map(r => r.cat))]);
+  el("catChips").innerHTML = cats.map(k =>
+    '<button class="chip" data-cat="' + k + '" aria-pressed="' + (k === fCat) + '">' +
+    (k === "all" ? "全部类别" : k) + "</button>"
+  ).join("");
+}
+
+function strip(h) { return h.replace(/<[^>]*>/g, ""); }
+
+function render() {
+  const q = fQ.trim().toLowerCase();
+  const rows = DATA.filter(r =>
+    (fSt === "all" || r.st === fSt) &&
+    (fCat === "all" || r.cat === fCat) &&
+    (!q || (r.id + " " + r.t + " " + strip(r.d) + " " + r.cat).toLowerCase().includes(q))
+  );
+
+  if (!rows.length) {
+    el("rows").innerHTML =
+      '<tr><td colspan="4" class="empty">没有匹配的条目。换个筛选条件试试。</td></tr>';
+    return;
+  }
+
+  el("rows").innerHTML = rows.map((r, i) => {
+    const s = ST[r.st];
+    return '<tr class="row" tabindex="0" role="button" aria-expanded="false" data-i="' + i + '">' +
+      '<td class="id">' + r.id + "</td>" +
+      '<td class="task">' + r.t + "</td>" +
+      '<td class="pri"><span class="ptag">' + r.pri + " · " + r.cat + "</span></td>" +
+      '<td class="st"><span class="pill ' + s.cls + '" title="' + s.hint + '">' + s.label + "</span></td>" +
+    "</tr>" +
+    '<tr class="detail" data-d="' + i + '" hidden><td colspan="4">' + r.d + "</td></tr>";
+  }).join("");
+
+  el("rows").querySelectorAll("tr.row").forEach(tr => {
+    const toggle = () => {
+      const d = el("rows").querySelector('tr.detail[data-d="' + tr.dataset.i + '"]');
+      const open = !d.hidden;
+      d.hidden = open;
+      tr.setAttribute("aria-expanded", String(!open));
+    };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+  });
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button.chip");
+  if (!b) return;
+  if (b.dataset.st !== undefined) fSt = b.dataset.st;
+  if (b.dataset.cat !== undefined) fCat = b.dataset.cat;
+  chips();
+  render();
+});
+
+el("q").addEventListener("input", e => { fQ = e.target.value; render(); });
+
+tally();
+chips();
+render();
+
+/* ---------------------------------------------------------------
+   Buddy allocator, the same shape as mdl/core/buddy.c: powers of two,
+   split from the smallest sufficient order, coalesce with the partner
+   half on free. Sizes are the real packed sizes of the real modules.
+   --------------------------------------------------------------- */
+const POOL = 128 * 1024, MIN = 1024;
+const MODULES = [
+  { id: "sw3_blue",  text: 112,  data: 16  },
+  { id: "i2c_scan",  text: 1032, data: 144 },
+  { id: "uart_echo", text: 1568, data: 216 },
+  { id: "spi_flash", text: 1740, data: 228 },
+  { id: "bench",     text: 1344, data: 180 },
+];
+const HEAPSTACK = 8 * 1024;   /* the ABI's fixed promise to every module */
+
+const up2 = (n) => { let o = MIN; while (o < n) { o *= 2; } return o; };
+
+let blocks = [];   /* {off, size, owner|null} -- owner null = free */
+let loaded = [];   /* module ids currently resident */
+
+function simReset() {
+  blocks = [{ off: 0, size: POOL, owner: null }];
+  loaded = [];
+}
+
+function alloc(bytes, owner) {
+  const want = up2(bytes);
+  /* smallest sufficient free block -- taking the first would split large
+     blocks to serve small requests, which is how an arena stops fitting
+     anything big */
+  let best = -1;
+  blocks.forEach((b, i) => {
+    if (b.owner === null && b.size >= want &&
+        (best < 0 || b.size < blocks[best].size)) { best = i; }
+  });
+  if (best < 0) { return false; }
+
+  while (blocks[best].size > want) {
+    const b = blocks[best];
+    const half = b.size / 2;
+    blocks.splice(best, 1,
+      { off: b.off, size: half, owner: null },
+      { off: b.off + half, size: half, owner: null });
+  }
+  blocks[best].owner = owner;
+  blocks[best].used = bytes;
+  return true;
+}
+
+function freeOwner(owner) {
+  blocks.forEach(b => { if (b.owner === owner) { b.owner = null; b.used = 0; } });
+  /* coalesce partners, repeatedly -- one pass is not enough, a merged
+     block may itself have a free partner */
+  let merged = true;
+  while (merged) {
+    merged = false;
+    for (let i = 0; i < blocks.length - 1; i++) {
+      const a = blocks[i], b = blocks[i + 1];
+      if (a.owner === null && b.owner === null && a.size === b.size &&
+          (a.off % (a.size * 2)) === 0 && a.off + a.size === b.off) {
+        blocks.splice(i, 2, { off: a.off, size: a.size * 2, owner: null });
+        merged = true;
+        break;
+      }
+    }
+  }
+}
+
+function loadModule(m) {
+  const before = JSON.parse(JSON.stringify(blocks));
+  if (!alloc(m.text, m.id + ":text") ||
+      !alloc(m.data, m.id + ":data") ||
+      !alloc(HEAPSTACK, m.id + ":hs")) {
+    blocks = before;                    /* all or nothing, as arena.c does */
+    return false;
+  }
+  loaded.push(m.id);
+  return true;
+}
+
+function unloadModule(id) {
+  freeOwner(id + ":text"); freeOwner(id + ":data"); freeOwner(id + ":hs");
+  loaded = loaded.filter(x => x !== id);
+}
+
+function simStats() {
+  let free = 0, largest = 0, used = 0, frag = 0;
+  blocks.forEach(b => {
+    if (b.owner === null) { free += b.size; if (b.size > largest) { largest = b.size; } }
+    else { used += (b.used || 0); frag += b.size - (b.used || 0); }
+  });
+  return { free, largest, used, frag };
+}
+
+function simRender() {
+  const bar = document.getElementById("simBar");
+  bar.innerHTML = "";
+  blocks.forEach(b => {
+    const pct = (b.size / POOL) * 100;
+    if (b.owner === null) {
+      const d = document.createElement("div");
+      d.className = "sim-blk free";
+      d.style.width = pct + "%";
+      d.textContent = b.size >= 4096 ? (b.size / 1024) + "K" : "";
+      d.title = (b.size / 1024) + "K free";
+      bar.appendChild(d);
+      return;
+    }
+    /* a used block is drawn in two parts so internal fragmentation is
+       visible as itself rather than hidden inside "allocated" */
+    const usedPct = pct * ((b.used || 0) / b.size);
+    const u = document.createElement("div");
+    u.className = "sim-blk used";
+    u.style.width = usedPct + "%";
+    u.title = b.owner + " -- " + b.used + "B in a " + (b.size / 1024) + "K block";
+    bar.appendChild(u);
+    const f = document.createElement("div");
+    f.className = "sim-blk frag";
+    f.style.width = (pct - usedPct) + "%";
+    f.title = "internal fragmentation: " + (b.size - (b.used || 0)) + "B";
+    bar.appendChild(f);
+  });
+
+  const st = simStats();
+  const pct = (n) => Math.round((n / POOL) * 1000) / 10;
+  document.getElementById("simRead").innerHTML =
+    "驻留 <b>" + loaded.length + "</b> 个模块 &nbsp;·&nbsp; " +
+    "空闲 <b>" + (st.free / 1024) + "K</b> &nbsp;·&nbsp; " +
+    "最大连续块 <b class='" + (st.largest === st.free ? "ok" : "warn") + "'>" +
+      (st.largest / 1024) + "K</b>" +
+    (st.largest === st.free && st.free > 0
+      ? " &nbsp;<span class='ok'>（完整合并）</span>"
+      : (st.free > st.largest ? " &nbsp;<span class='warn'>（已碎片化：空闲够但连不起来）</span>" : "")) +
+    "<br>模块实际用掉 <b>" + st.used + "B</b>，" +
+    "对齐付出 <b class='warn'>" + Math.round(st.frag / 1024) + "K</b> 内部碎片" +
+    (st.used > 0 ? "（" + pct(st.frag) + "% 的池）" : "");
+
+  document.querySelectorAll("button.mini[data-mod]").forEach(b => {
+    const id = b.dataset.mod;
+    const on = loaded.includes(id);
+    b.textContent = (on ? "卸载 " : "加载 ") + id;
+    b.classList.toggle("danger", on);
+    if (!on) {
+      /* disable when it genuinely cannot fit -- the simulator refuses for
+         the same reason the device does, rather than silently doing
+         nothing */
+      const m = MODULES.find(x => x.id === id);
+      const need = Math.max(up2(m.text), up2(m.data), HEAPSTACK);
+      b.disabled = simStats().largest < need;
+    } else {
+      b.disabled = false;
+    }
+  });
+}
+
+function simInit() {
+  const btns = document.getElementById("simBtns");
+  const lbl = document.createElement("span");
+  lbl.className = "lbl";
+  lbl.textContent = "模块";
+  btns.appendChild(lbl);
+  MODULES.forEach(m => {
+    const b = document.createElement("button");
+    b.className = "mini";
+    b.dataset.mod = m.id;
+    b.addEventListener("click", () => {
+      if (loaded.includes(m.id)) { unloadModule(m.id); } else { loadModule(m); }
+      simRender();
+    });
+    btns.appendChild(b);
+  });
+  const r = document.createElement("button");
+  r.className = "mini";
+  r.textContent = "全部卸载";
+  r.addEventListener("click", () => { simReset(); simRender(); });
+  btns.appendChild(r);
+
+  simReset();
+  /* Open with two modules resident rather than an empty pool: a page at
+     rest should show what the thing does, not an unused shell. */
+  loadModule(MODULES[0]);
+  loadModule(MODULES[3]);
+  simRender();
+}
+simInit();
+
+/* ---------------------------------------------------------------------
+   Console replay.
+
+   Every string in TERM is one this device actually printed, or one the
+   firmware's own format string produces verbatim for values that were
+   recorded. Nothing here is written to look plausible: a command with no
+   recording answers with a meta line saying so. A page about the
+   difference between "verified" and "compiles" cannot invent device
+   output to look complete.
+   --------------------------------------------------------------------- */
+const TERM = [
+  {c:"ver", why:"对着 build.ps1 打印的时间比一眼——Ozone 会缓存工程加载时的 ELF，重编后照样烧那份旧的",
+   o:[["o","build  : Sep 14 2026 20:51:12"],
+      ["o","abi    : v10   (an MDL packed for a different ABI is refused)"],
+      ["o","wbuf   : enabled (normal speed)"]]},
+
+  {c:"slots", why:"四个槽位下，「那个 MDL」不再是一个说法",
+   o:[["o","0: sw3_irq              text 0x20020000  claims 2  RUNNING"],
+      ["o","1: uart_echo   cmd uart text 0x20020800  claims 1  RUNNING"],
+      ["o","2: i2c_scan cmd i2cscan text 0x20021800  claims 1  RUNNING"],
+      ["meta","三块独立的 buddy 块。cmd 那一列是这个模块自己的控制台命令，由 supervisor 派发"]]},
+
+  {c:"json", why:"给 agent 的那条。一行、一个对象、一次往返",
+   o:[["hit",'{"abi":10,"build":"Sep 14 2026 20:51:11","max_slots":4,'],
+      ["hit",' "slots":[{"i":0,"state":"running","name":"sw3_irq", ... }],'],
+      ["hit",' "arena":{"free":98304,"largest":65536},"stored":3,"fault":null}'],
+      ["meta","槽位对象的后半（cmd / text / claims / events 计数）在这里略去了；真机输出是完整的一行"],
+      ["bad","注意 build 比上面 ver 少一秒 —— 这就是那个「两个真相源」，已修，尚未烧录"]]},
+
+  {c:"buddy", why:"自检在设备上跑，不在 PC 上跑：分配器在这个目标上对不对，只有这个目标能回答",
+   o:[["o","arena: 96K free, largest block 64K"],
+      ["hit","selftest OK: all checks passed, pool 128K"],
+      ["meta","96K 空闲而最大块只有 64K —— 这就是对齐带来的内部碎片，如实报告，不做整理"]]},
+
+  {c:"i2c scan 1", why:"W2：在设备上戳硬件，不需要解释器",
+   o:[["o","0 device(s)"],
+      ["meta","空总线扫 112 个地址全部干净返回。手上没有 I2C 器件，所以这条验的是「总线活着且不误报」"],
+      ["meta","已知未修：不存在的地址走超时而不是 NACK，扫满一轮约 45 s"]]},
+
+  {c:"i2c read 1 0x48 2", why:"没器件时的回答要说清是哪一种失败",
+   o:[["bad","no answer (wrong address? not powered? no pull-ups?)"],
+      ["meta","「没应答」和「传输起来了但失败」是两条不同的信息。把它们折叠成一个「没器件」，正是 I2C 三层问题里掩盖根因的那一层"]]},
+
+  {c:"spi", why:"片选故意不归驱动管",
+   o:[["o","  MDL_RES_SPI(3)  PB3 SCK / PB4 MISO / PB5 MOSI   mode 0  1000000 Hz"],
+      ["o","chip select is not the driver's -- declare a GPIO and drive it"],
+      ["o","onboard W25Q32 is on this bus (CS = PE3, whitelist pin 5) -- the spidemo MDL reads its JEDEC id"],
+      ["meta","真机读回的 JEDEC id 是 C8 40 16 = GigaDevice GD25Q32。判定曾硬编码 Winbond 的 0xEF，把正常总线判成 unexpected id"]]},
+
+  {c:"help", why:"宿主的命令在这里；MDL 自己的命令在 slots 里",
+   o:[["o","commands:"],
+      ["o","  help              this list"],
+      ["o","  status            which MDL is loaded, and the last fault"],
+      ["o","  clk               system_core_clock, as configured"],
+      ["o","  arena             arena region addresses"],
+      ["o","  pins              gpio pins, and who owns each one"],
+      ["o","  adc               adc channels, and which pin each one is"],
+      ["o","  spi               spi buses, their pins and current settings"],
+      ["o","  buddy             arena allocator: free space and self-test"],
+      ["o","  slots             which modules are resident, and what each owns"],
+      ["o","  json              the whole live state on one line, for machines"],
+      ["o","  i2c scan|read|write  talk to an I2C device from here, no MDL needed"],
+      ["o","  evt <pin> [n]     fire a pin's interrupt from software (no button needed)"],
+      ["o","  led <i> <0|1>     drive whitelisted output pin i (LEDs are active-low)"],
+      ["o","  btn <i>           read whitelisted input pin i"],
+      ["o","  mem <addr> [n]    dump n words (default 8) from addr"],
+      ["o","  fault             fault record left by the previous run"],
+      ["o","  ver               firmware build time + ABI version"],
+      ["o","  persist           what is saved in flash, if anything"],
+      ["o","  forget            erase the saved MDL"],
+      ["o","  unload            unload the MDL, reclaim its resources"]]},
+
+  {c:"uart", why:"MDL 自己的命令：supervisor 在那个模块自己的非特权任务里跑它",
+   o:[["o","MDL returned 3"],
+      ["meta","PB10–PB11 一根跳线做真回环，收到的 3 个字节逐字节相符：4D 44 4C"],
+      ["meta","从这里调 MDL 是提权的——所以控制台不自己调，交给 supervisor 去启那个模块自己的任务，否则沙箱一文不值"]]},
+
+  {c:"blink", why:"没有模块认领这个名字时的回答",
+   o:[["bad","unknown command: blink  (try `help`, or `slots` for module commands)"],
+      ["meta","这条路径曾经写好了却从没被走到：控制台自己先比了一次 g_mdl_slot.cmd_name，在多槽位下静悄悄意味着「槽位 0」，于是槽位 1 的模块在 slots 里登着自己的命令、敲下去却说不认识"]]},
+];
+
+const TERM_UNKNOWN = [
+  ["bad", "unknown command: %s  (try `help`, or `slots` for module commands)"],
+];
+
+function termLine(cls, text) {
+  const sp = document.createElement("span");
+  sp.className = cls;
+  sp.textContent = text + "\n";
+  return sp;
+}
+
+function termRun(cmd) {
+  const out = document.getElementById("termOut");
+  out.appendChild(termLine("p", "mdl> " + cmd));
+
+  const hit = TERM.find(e => e.c === cmd.trim());
+  if (hit) {
+    hit.o.forEach(([cls, text]) => out.appendChild(termLine(cls, text)));
+  } else if (cmd.trim() === "") {
+    /* the firmware reprints the prompt and nothing else */
+  } else {
+    const known = ["status","clk","arena","pins","adc","evt","led","btn",
+                   "mem","fault","persist","forget","unload","i2c","spi"];
+    const head = cmd.trim().split(/\s+/)[0];
+    if (known.includes(head)) {
+      out.appendChild(termLine("meta",
+        "这条命令设备上有，但这次回放里没有它的真机记录 —— 所以这里不编一段输出。"));
+    } else {
+      out.appendChild(termLine("bad",
+        "unknown command: " + head + "  (try `help`, or `slots` for module commands)"));
+    }
+  }
+  out.scrollTop = out.scrollHeight;
+}
+
+function termInit() {
+  const side = document.getElementById("termCmds");
+  TERM.forEach(e => {
+    const b = document.createElement("button");
+    b.textContent = e.c;
+    b.title = e.why;
+    b.addEventListener("click", () => termRun(e.c));
+    side.appendChild(b);
+  });
+
+  const inp = document.getElementById("termIn");
+  inp.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter") { return; }
+    termRun(inp.value);
+    inp.value = "";
+  });
+
+  /* At rest the terminal already shows something worth reading: the two
+     commands that carry the section's point, one for a person and one for
+     a machine. An empty prompt would show nothing. */
+  termRun("slots");
+  termRun("json");
+}
+termInit();
+
+</script>

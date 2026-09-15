@@ -242,19 +242,29 @@ MDL_MODULE_RESOURCES(GPIO(13), GPIO(14));  /* 宏生成只读 const 段 */
 ## 6. 目录地图
 
 ```
+docs/
+└── mdl-ledger.html      可交互进度页的源码（发布副本见下方链接）
 mdl/
 ├── tools/
-│   ├── packer.py        ELF32 解析 + 校验 + 打包（MCP-B 的落点）
-│   ├── watch.py         人工 inner loop（MCP server 将取代其角色）
+│   ├── packer.py        ELF32 解析 + 校验 + 打包（B2 的落点）
+│   ├── watch.py         存盘即重建推送（W1，真机 0.48 s）
 │   ├── mock_host/       原生编译 + ASan 预检
-│   └── mcp_server/      【待建】MCP server
-├── transport/           USB CDC 厂商驱动 + MDLC 帧协议
-├── core/                loader / supervisor / module_task / sandbox / registry
+│   └── mcp_server/      MCP server：compile_check / deploy / status /
+│                        logs / describe / verification_status（A1–A5）
+├── transport/           USB CDC 厂商驱动 + MDLC 帧协议 + 文本控制台
+├── core/                loader / supervisor / module_task / sandbox /
+│                        registry（4 槽位）/ buddy / arena
 ├── arch/arm_cm4/        MPU、故障恢复、GOT 重定位、r9 PIC 切换
 ├── host/                host_api_t vtable + SVC 门（唯一模块→宿主通道）
-├── linker/              mdl_arena.ld（64K SRAM arena）
-└── tests/               HIL m0–m4 / QEMU cmsdk_m4 / 7 个故障注入模块
+│                        gpio / events / i2c / uart / adc / spi + board_pins.def
+├── linker/              mdl_arena.ld（128K SRAM arena，buddy 管理）
+└── tests/               HIL m0–m4 / QEMU cmsdk_m4 / 27 个测试模块
 ```
+
+**进度页**：源码在 `docs/mdl-ledger.html`，发布副本是
+<https://claude.ai/code/artifact/70fe49e2-f28b-439e-8703-a45b00553e85>。
+**本文档仍是唯一事实来源，页面是它的视图**——两边不一致时以本文档为准，
+而页面上的每条设备输出都必须是真机抄下来的，不能是示意。
 
 ## 7. 关键契约文件
 
@@ -631,6 +641,31 @@ REPL 真正提供的是三样东西，现在三样都有答案：
 ## 9. 工作日志
 
 > 新条目加在最上面。格式：`### YYYY-MM-DD 名字/agent id` + 简短条目列表。
+
+### 2026-09-15 claude/opus-5（进度页进仓库；并把两处文档漂移收掉）
+
+**页面源码从临时目录搬进了仓库**：`docs/mdl-ledger.html`。
+
+在此之前它只存在于发布出去的那份副本里——**一个没有源码在版本控制里的产物，
+下一个人（或下一个 agent）只能重写而不能修改**。现在它和固件走同一套历史：
+改页面是一次提交，页面上写了什么、什么时候改的、为什么改，都能 `git log` 查。
+
+> 页面与本文档的关系没有变：**本文档是事实来源，页面是它的视图**。
+> 页面上的每条设备输出必须是真机抄下来的；有命令但没记录时，页面明说没有记录，
+> **而不是编一段像样的输出**——那正是这个项目整体在防的东西。
+
+新增一节「控制台 · 真机会话回放」：可以直接敲 `json` / `slots` / `ver` /
+`i2c scan 1` / `spi` / `help`，输出全部来自真机会话或固件自己的格式串。
+
+**同时收掉两处文档漂移**（都是「同一份文档里两个互相矛盾的说法」）：
+
+| §3 里程碑表 | 还写着 M0–M3「未上真机」、MCP-A「未开始 — 下一里程碑」，而它下面的认领板上 A1–A3 早已是**已验证** |
+| §6 目录地图 | 还写着 `mcp_server/` 是「【待建】」、arena 是 64K、测试模块 7 个（实际 27 个） |
+
+这两处和昨天那个 build id 是同一个形状：**已有唯一来源，旁边又留着一份过期的**。
+
+**待烧录**：M4 固件 `Sep 14 2026 22:14:49`（build id 归一 + `help` 列对齐）。
+烧完两件事——核对 `ver` 与 `json` 的构建号一致，推 `cmd_clash` 结掉 S4。
 
 ### 2026-09-14 claude/opus-5（A4/A5：让 agent 读得到状态，也读得到「验过没有」）
 
